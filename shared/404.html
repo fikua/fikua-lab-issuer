@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 — Fikua Lab</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232A9D8F'/><text x='50%25' y='53%25' dominant-baseline='central' text-anchor='middle' font-family='sans-serif' font-weight='700' font-size='18' fill='white'>F</text></svg>">
+    <style>
+        :root {
+            --bg: #ffffff; --surface: #ffffff; --border: #e2e8f0;
+            --text: #334155; --text-muted: #64748b; --heading: #0f172a;
+            --accent: #2A9D8F; --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f1117; --surface: #1a1d27; --border: #2a2e3f;
+                --text: #e1e4ed; --text-muted: #8b90a0; --heading: #e2e8f0;
+                --accent: #2dd4bf;
+            }
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: var(--font); background: var(--bg); color: var(--text);
+            min-height: 100vh; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; padding: 2rem;
+        }
+        .error-icon {
+            width: 80px; height: 80px; border-radius: 20px;
+            background: rgba(239, 68, 68, 0.1); color: #ef4444;
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 { font-size: 1.5rem; font-weight: 700; color: var(--heading); margin-bottom: 0.5rem; }
+        .code { font-size: 3rem; font-weight: 800; color: var(--accent); margin-bottom: 0.5rem; }
+        p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 2rem; max-width: 380px; text-align: center; line-height: 1.6; }
+        a {
+            font-family: var(--font); font-size: 0.875rem; font-weight: 600;
+            padding: 0.5rem 1.25rem; border-radius: 8px; text-decoration: none;
+            background: var(--accent); color: #fff; transition: opacity 0.15s;
+        }
+        a:hover { opacity: 0.85; }
+        @media (prefers-color-scheme: dark) { a { color: #0f1117; } }
+    </style>
+</head>
+<body>
+    <div class="error-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 15h0"/><path d="M16 15h0"/><path d="M9.5 9 8 10.5"/><path d="M14.5 9l1.5 1.5"/></svg>
+    </div>
+    <div class="code">404</div>
+    <h1>Page not found</h1>
+    <p>The page you're looking for doesn't exist or has been moved.</p>
+    <a href="https://lab.fikua.com">Go to Fikua Lab</a>
+</body>
+</html>
