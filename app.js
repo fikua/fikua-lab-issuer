@@ -86,6 +86,68 @@
                 <span>${esc(cert.serial || 'N/A')}</span>
             </div>
         `;
+
+        triggerIssuance(cert);
+    }
+
+    async function triggerIssuance(cert) {
+        const offersList = document.getElementById('offers-list');
+        offersList.innerHTML = '<span class="empty-state">Creating credential offer...</span>';
+
+        // Build credential_data from certificate claims
+        const credentialData = {};
+        const givenName = cert.givenName || cert.given_name;
+        const familyName = cert.surname || cert.family_name;
+        const birthDate = cert.birth_date || cert.birthDate;
+        if (givenName) credentialData.given_name = givenName;
+        if (familyName) credentialData.family_name = familyName;
+        if (birthDate) credentialData.birth_date = birthDate;
+
+        try {
+            const res = await fetch('/oid4vci/v1/issuance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    credential_type: 'eu.europa.ec.eudi.pid.1',
+                    credential_data: credentialData,
+                    source_type: 'x509_cert',
+                    source_ref: cert.subject || cert.serial || ''
+                })
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            if (data.credential_offer_uri) {
+                const deepLink = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(data.credential_offer_uri)}`;
+                offersList.innerHTML = `
+                    <div class="cert-info">
+                        <div class="cert-row">
+                            <span class="cert-label">Type</span>
+                            <span>PID (SD-JWT VC)</span>
+                        </div>
+                        <div class="cert-row">
+                            <span class="cert-label">Offer URI</span>
+                            <span style="word-break:break-all; font-family:var(--font-mono); font-size:0.8rem">${esc(data.credential_offer_uri)}</span>
+                        </div>
+                        <a href="${esc(deepLink)}" class="btn btn-accent" style="margin-top:1rem; display:inline-block">Open in Wallet</a>
+                    </div>`;
+            } else if (data.credential_offer) {
+                const offerJson = JSON.stringify(data.credential_offer, null, 2);
+                const deepLink = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(data.credential_offer))}`;
+                offersList.innerHTML = `
+                    <div class="cert-info">
+                        <div class="cert-row">
+                            <span class="cert-label">Type</span>
+                            <span>PID (SD-JWT VC)</span>
+                        </div>
+                        <pre style="margin:0.5rem 0; font-size:0.8rem; overflow-x:auto">${esc(offerJson)}</pre>
+                        <a href="${esc(deepLink)}" class="btn btn-accent" style="margin-top:1rem; display:inline-block">Open in Wallet</a>
+                    </div>`;
+            }
+        } catch (err) {
+            offersList.innerHTML = `<span class="empty-state">Error: ${esc(err.message)}</span>`;
+        }
     }
 
     function esc(str) {
