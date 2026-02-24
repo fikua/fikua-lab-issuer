@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fikua Lab — Issuer</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="/shared/consent.css">
-    <script src="/shared/consent.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,56 +25,116 @@
     </nav>
 
     <main>
-        <!-- Identify section -->
-        <section id="identify" class="identify-section">
-            <div class="identify-card">
-                <div class="identify-icon">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                </div>
-                <h1>Credential Issuer</h1>
-                <p class="identify-sub">Issue verifiable credentials following OID4VCI. Authenticate with your digital certificate to proceed.</p>
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="issue">Issue</button>
+            <button class="tab" data-tab="records">Records</button>
+        </div>
 
-                <div id="phase-identify" class="phase">
-                    <button id="btn-identify" class="btn btn-accent btn-lg">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        Identify with certificate
-                    </button>
-                    <p class="identify-hint">You will be redirected to select your digital certificate</p>
-                </div>
-
-                <div id="phase-loading" class="phase hidden">
-                    <div class="spinner"></div>
-                    <p class="identify-status">Verifying certificate...</p>
-                </div>
-
-                <div id="phase-success" class="phase hidden">
-                    <div class="success-icon">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <!-- Tab: Issue -->
+        <section id="tab-issue">
+            <!-- Step 1: Credential selector -->
+            <div id="step-select" class="step">
+                <div class="step-header">
+                    <div class="step-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                     </div>
-                    <h2>Certificate verified</h2>
-                    <div id="cert-info" class="cert-info"></div>
-                    <p class="identify-status">Ready to issue credentials</p>
+                    <div>
+                        <h2>Select Credential</h2>
+                        <p class="step-sub">Choose a credential configuration to issue</p>
+                    </div>
+                </div>
+                <div id="config-grid" class="config-grid">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- Step 2: Form -->
+            <div id="step-form" class="step hidden">
+                <div class="step-header">
+                    <button id="btn-back-select" class="btn-icon" aria-label="Back">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    </button>
+                    <div>
+                        <h2 id="form-title">Credential Details</h2>
+                        <p id="form-sub" class="step-sub"></p>
+                    </div>
+                </div>
+                <form id="issuance-form" class="issuance-form">
+                    <div id="form-fields"></div>
+                    <div class="form-actions">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="chk-tx-code">
+                            <span>Require transaction code</span>
+                        </label>
+                        <button type="submit" class="btn btn-accent">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                            Issue Credential
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Step 3: Result -->
+            <div id="step-result" class="step hidden">
+                <div class="step-header">
+                    <div class="step-icon step-icon-success">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <div>
+                        <h2>Credential Offer Created</h2>
+                        <p class="step-sub">Scan the QR code or use the deep link to accept in a wallet</p>
+                    </div>
+                </div>
+                <div id="result-content" class="result-content"></div>
+                <div class="result-actions">
+                    <button id="btn-issue-another" class="btn btn-accent">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Issue Another
+                    </button>
                 </div>
             </div>
         </section>
 
-        <!-- Credential Offers -->
-        <section id="offers" class="hidden">
-            <h2>Credential Offers</h2>
-            <p class="section-sub">Active credential offers pending wallet acceptance.</p>
-            <div id="offers-list" class="offers-list">
-                <span class="empty-state">No active offers</span>
+        <!-- Tab: Records -->
+        <section id="tab-records" class="hidden">
+            <div class="records-toolbar">
+                <h2>Issuance Records</h2>
             </div>
-        </section>
-
-        <!-- Issued Credentials -->
-        <section id="issued" class="hidden">
-            <h2>Issued Credentials</h2>
-            <div id="issued-list" class="issued-list">
-                <span class="empty-state">No credentials issued yet</span>
+            <div id="records-table-wrap" class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort="id">ID</th>
+                            <th>Subject</th>
+                            <th class="sortable" data-sort="credential_type">Type</th>
+                            <th class="sortable" data-sort="status">Status</th>
+                            <th class="sortable active-sort" data-sort="created_at">Created <span class="sort-arrow">&#9660;</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="records-body">
+                        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="pagination" class="pagination">
+                <button id="btn-prev" class="btn btn-sm" disabled>Prev</button>
+                <span id="page-info" class="page-info"></span>
+                <button id="btn-next" class="btn btn-sm" disabled>Next</button>
             </div>
         </section>
     </main>
+
+    <!-- Record detail dialog -->
+    <dialog id="record-dialog" class="record-dialog">
+        <div class="dialog-header">
+            <h3>Issuance Record</h3>
+            <button id="btn-close-dialog" class="btn-icon" aria-label="Close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div id="dialog-content" class="dialog-content"></div>
+    </dialog>
 
     <script src="app.js"></script>
 </body>
