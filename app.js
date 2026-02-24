@@ -377,7 +377,7 @@
         let html = '';
         html += dialogRow('ID', record.id);
         html += dialogRow('Type', record.credential_type);
-        html += dialogRow('Status', `<span class="badge badge-${esc(record.status)}">${esc(record.status)}</span>`);
+        html += dialogRowHtml('Status', `<span class="badge badge-${esc(record.status)}">${esc(record.status)}</span>`);
         html += dialogRow('Subject', record.subject_name || '-');
         if (record.recipient_email) html += dialogRow('Recipient Email', record.recipient_email);
         html += dialogRow('Source Type', record.source_type || '-');
@@ -404,7 +404,11 @@
     }
 
     function dialogRow(label, value) {
-        return `<div class="dialog-row"><span class="dialog-label">${esc(label)}</span><span class="dialog-value">${value}</span></div>`;
+        return `<div class="dialog-row"><span class="dialog-label">${esc(label)}</span><span class="dialog-value">${esc(value)}</span></div>`;
+    }
+
+    function dialogRowHtml(label, html) {
+        return `<div class="dialog-row"><span class="dialog-label">${esc(label)}</span><span class="dialog-value">${html}</span></div>`;
     }
 
     // S8: QR Code generator
