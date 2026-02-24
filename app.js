@@ -17,6 +17,8 @@
 
 // S1-S8: Main application
 (() => {
+    const WALLET_URL = 'https://wallet.lab.fikua.com';
+
     // S1: Helpers
     function esc(str) {
         if (!str) return '';
@@ -223,18 +225,18 @@
 
         let qrContent = '';
         if (offerUri) {
-            const deepLink = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(offerUri)}`;
-            qrContent = deepLink;
+            const walletLink = `${WALLET_URL}/?credential_offer_uri=${encodeURIComponent(offerUri)}`;
+            qrContent = walletLink;
             html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(deepLink)}</div>`;
-            html += `<div class="result-deeplink"><a href="${esc(deepLink)}" class="btn btn-accent">Open in Wallet</a></div>`;
+            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(walletLink)}</div>`;
+            html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
         } else if (offer) {
             const offerJson = JSON.stringify(offer, null, 2);
-            const deepLink = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
-            qrContent = deepLink;
+            const walletLink = `${WALLET_URL}/?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+            qrContent = walletLink;
             html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
             html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
-            html += `<div class="result-deeplink"><a href="${esc(deepLink)}" class="btn btn-accent">Open in Wallet</a></div>`;
+            html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
         }
 
         content.innerHTML = html;
