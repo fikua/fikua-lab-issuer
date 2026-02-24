@@ -58,6 +58,7 @@
         if (!id) return '-';
         if (id.includes('pid.mdoc')) return 'PID mdoc';
         if (id.includes('pid')) return 'PID sd-jwt';
+        if (id.includes('student-id')) return 'Student ID';
         if (id.includes('mDL')) return 'mDL';
         return id;
     }
@@ -215,6 +216,24 @@
         const content = document.getElementById('result-content');
         let html = '';
 
+        // Draft/email flow — no QR, show invitation sent
+        if (data.status === 'draft') {
+            html += `
+                <div class="result-draft">
+                    <div class="result-draft-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/>
+                        </svg>
+                    </div>
+                    <div class="result-draft-title">Invitation Sent</div>
+                    <div class="result-draft-desc">A credential invitation email has been sent to:</div>
+                    <div class="result-draft-email">${esc(data.email_sent_to)}</div>
+                    <div class="result-draft-hint">The recipient will receive a link to open their wallet and complete the identification process.</div>
+                </div>`;
+            content.innerHTML = html;
+            return;
+        }
+
         const offerUri = data.credential_offer_uri;
         const offer = data.credential_offer;
         const txCode = data.tx_code;
@@ -360,6 +379,7 @@
         html += dialogRow('Type', record.credential_type);
         html += dialogRow('Status', `<span class="badge badge-${esc(record.status)}">${esc(record.status)}</span>`);
         html += dialogRow('Subject', record.subject_name || '-');
+        if (record.recipient_email) html += dialogRow('Recipient Email', record.recipient_email);
         html += dialogRow('Source Type', record.source_type || '-');
         html += dialogRow('Source Ref', record.source_ref || '-');
         html += dialogRow('Created', formatDate(record.created_at));
