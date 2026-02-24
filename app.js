@@ -221,24 +221,28 @@
             html += `<div class="result-tx-code"><span class="result-tx-label">TX Code</span> ${esc(txCode)}</div>`;
         }
 
+        let qrContent = '';
         if (offerUri) {
-            html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(offerUri)}</div>`;
             const deepLink = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(offerUri)}`;
+            qrContent = deepLink;
+            html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
+            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(deepLink)}</div>`;
             html += `<div class="result-deeplink"><a href="${esc(deepLink)}" class="btn btn-accent">Open in Wallet</a></div>`;
         } else if (offer) {
             const offerJson = JSON.stringify(offer, null, 2);
             const deepLink = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+            qrContent = deepLink;
+            html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
             html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
             html += `<div class="result-deeplink"><a href="${esc(deepLink)}" class="btn btn-accent">Open in Wallet</a></div>`;
         }
 
         content.innerHTML = html;
 
-        // Generate QR code if we have an offer URI
-        if (offerUri) {
+        // Generate QR code with the full deeplink URI
+        if (qrContent) {
             const canvas = document.getElementById('qr-canvas');
-            if (canvas) generateQR(canvas, offerUri);
+            if (canvas) generateQR(canvas, qrContent);
 
             // Copy URI on click
             const uriEl = document.getElementById('offer-uri');
