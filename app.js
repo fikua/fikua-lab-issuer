@@ -263,8 +263,8 @@
         const content = document.getElementById('result-content');
         let html = '';
 
-        // Draft/email flow — no QR, show invitation sent
-        if (data.status === 'draft') {
+        // Email invitation banner (shown alongside QR/deep link)
+        if (data.email_sent_to) {
             html += `
                 <div class="result-draft">
                     <div class="result-draft-icon">
@@ -275,10 +275,7 @@
                     <div class="result-draft-title">Invitation Sent</div>
                     <div class="result-draft-desc">A credential invitation email has been sent to:</div>
                     <div class="result-draft-email">${esc(data.email_sent_to)}</div>
-                    <div class="result-draft-hint">The recipient will receive a link to open their wallet and complete the identification process.</div>
                 </div>`;
-            content.innerHTML = html;
-            return;
         }
 
         const offerUri = data.credential_offer_uri;
