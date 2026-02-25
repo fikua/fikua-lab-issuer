@@ -242,7 +242,7 @@
             const formData = new FormData(form);
             const credentialData = {};
             for (const [key, value] of formData.entries()) {
-                if (key !== 'tx_code_required') credentialData[key] = value;
+                if (key !== 'tx_code_required' && key !== 'delivery_method') credentialData[key] = value;
             }
 
             const txCodeRequired = document.getElementById('chk-tx-code').checked;
