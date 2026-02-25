@@ -325,15 +325,19 @@
 
         let qrContent = '';
         if (offerUri) {
+            // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
+            qrContent = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(offerUri)}`;
+            // Button: HTTPS wallet link for same-device browser flow
             const walletLink = `${WALLET_URL}/?credential_offer_uri=${encodeURIComponent(offerUri)}`;
-            qrContent = walletLink;
             html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(walletLink)}</div>`;
+            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(qrContent)}</div>`;
             html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
         } else if (offer) {
             const offerJson = JSON.stringify(offer, null, 2);
+            // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
+            qrContent = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+            // Button: HTTPS wallet link for same-device browser flow
             const walletLink = `${WALLET_URL}/?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
-            qrContent = walletLink;
             html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
             html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
             html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
@@ -522,7 +526,8 @@
             qr.make();
             const modules = qr.getModuleCount();
             const cellSize = Math.max(4, Math.floor(240 / modules));
-            const size = modules * cellSize;
+            const margin = cellSize * 4; // ISO 18004 quiet zone: 4 modules
+            const size = modules * cellSize + margin * 2;
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
@@ -532,7 +537,7 @@
             for (let row = 0; row < modules; row++) {
                 for (let col = 0; col < modules; col++) {
                     if (qr.isDark(row, col)) {
-                        ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                        ctx.fillRect(margin + col * cellSize, margin + row * cellSize, cellSize, cellSize);
                     }
                 }
             }
