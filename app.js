@@ -59,7 +59,6 @@
         if (id.includes('pid.mdoc')) return 'PID mdoc';
         if (id.includes('pid')) return 'PID sd-jwt';
         if (id.includes('student-id')) return 'Student ID';
-        if (id.includes('mDL')) return 'mDL';
         return id;
     }
 
@@ -72,15 +71,6 @@
             given_name: 'Max',
             family_name: 'Mustermann',
             birth_date: '1990-06-15',
-        },
-        'org.iso.18013.5.1.mDL': {
-            family_name: 'Mustermann',
-            given_name: 'Max',
-            birth_date: '1990-06-15',
-            issue_date: '2025-01-01',
-            expiry_date: '2035-01-01',
-            document_number: 'DL-2025-000042',
-            driving_privileges: 'B, AM',
         },
         'student-id': {
             identifier: 'STU-2025-001',
