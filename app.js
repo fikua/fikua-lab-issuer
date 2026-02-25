@@ -210,8 +210,26 @@
             document.getElementById('delivery-screen').checked = true;
         }
 
+        // Reset grant type to pre-authorized and update tx_code visibility
+        document.getElementById('grant-pre-auth').checked = true;
+        updateTxCodeVisibility();
+
         showStep('form');
     }
+
+    // Grant type toggle: hide tx_code checkbox when authorization_code is selected
+    function updateTxCodeVisibility() {
+        const isPreAuth = document.getElementById('grant-pre-auth').checked;
+        const txCodeLabel = document.getElementById('tx-code-label');
+        txCodeLabel.classList.toggle('hidden', !isPreAuth);
+        if (!isPreAuth) {
+            document.getElementById('chk-tx-code').checked = false;
+        }
+    }
+
+    document.querySelectorAll('input[name="grant_type"]').forEach(radio => {
+        radio.addEventListener('change', updateTxCodeVisibility);
+    });
 
     // S4: Form steps
     const stepSelect = document.getElementById('step-select');
@@ -241,12 +259,14 @@
         try {
             const formData = new FormData(form);
             const credentialData = {};
+            const excludedKeys = new Set(['tx_code_required', 'delivery_method', 'grant_type']);
             for (const [key, value] of formData.entries()) {
-                if (key !== 'tx_code_required' && key !== 'delivery_method') credentialData[key] = value;
+                if (!excludedKeys.has(key)) credentialData[key] = value;
             }
 
             const txCodeRequired = document.getElementById('chk-tx-code').checked;
             const deliveryMethod = document.querySelector('input[name="delivery_method"]:checked')?.value || 'screen';
+            const grantType = document.querySelector('input[name="grant_type"]:checked')?.value || 'pre-authorized_code';
 
             const result = await api('POST', '/oid4vci/v1/issuance', {
                 credential_type: selectedConfigId,
@@ -255,6 +275,7 @@
                 source_ref: 'Manual issuance from issuer UI',
                 tx_code_required: txCodeRequired,
                 delivery_method: deliveryMethod,
+                grant_type: grantType,
             });
 
             renderResult(result);
