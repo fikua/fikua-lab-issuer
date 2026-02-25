@@ -202,6 +202,14 @@
             });
         }
 
+        // Show delivery method selector when credential has an email claim
+        const deliveryEl = document.getElementById('delivery-method');
+        const hasEmailClaim = claims.some(c => c.path?.[0] === 'mail');
+        deliveryEl.classList.toggle('hidden', !hasEmailClaim);
+        if (!hasEmailClaim) {
+            document.getElementById('delivery-screen').checked = true;
+        }
+
         showStep('form');
     }
 
@@ -238,6 +246,7 @@
             }
 
             const txCodeRequired = document.getElementById('chk-tx-code').checked;
+            const deliveryMethod = document.querySelector('input[name="delivery_method"]:checked')?.value || 'screen';
 
             const result = await api('POST', '/oid4vci/v1/issuance', {
                 credential_type: selectedConfigId,
@@ -245,6 +254,7 @@
                 source_type: 'admin_portal',
                 source_ref: 'Manual issuance from issuer UI',
                 tx_code_required: txCodeRequired,
+                delivery_method: deliveryMethod,
             });
 
             renderResult(result);
@@ -262,9 +272,10 @@
     function renderResult(data) {
         const content = document.getElementById('result-content');
         let html = '';
+        const emailDelivery = !!data.email_sent_to;
 
-        // Email invitation banner (shown alongside QR/deep link)
-        if (data.email_sent_to) {
+        // Email delivery: show confirmation only, no QR/deep link/tx_code on screen
+        if (emailDelivery) {
             html += `
                 <div class="result-draft">
                     <div class="result-draft-icon">
@@ -275,9 +286,13 @@
                     <div class="result-draft-title">Invitation Sent</div>
                     <div class="result-draft-desc">A credential invitation email has been sent to:</div>
                     <div class="result-draft-email">${esc(data.email_sent_to)}</div>
+                    ${data.tx_code ? '<div class="result-draft-desc" style="margin-top:0.75rem;">A verification code will be sent when the wallet claims the credential.</div>' : ''}
                 </div>`;
+            content.innerHTML = html;
+            return;
         }
 
+        // Screen delivery: show QR + deep link + tx_code
         const offerUri = data.credential_offer_uri;
         const offer = data.credential_offer;
         const txCode = data.tx_code;

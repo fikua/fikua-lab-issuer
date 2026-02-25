@@ -219,6 +219,28 @@ main {
 .checkbox-label input { accent-color: var(--accent); }
 .form-defaults-wrap { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
 
+/* --- Delivery method selector --- */
+.delivery-method {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.5rem 0; margin-bottom: 0.25rem;
+}
+.delivery-label {
+    font-size: 0.8rem; font-weight: 500; color: var(--text-muted);
+}
+.delivery-options { display: flex; gap: 0.35rem; }
+.delivery-option { cursor: pointer; }
+.delivery-option input { display: none; }
+.delivery-pill {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.78rem; font-weight: 500; padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text-muted); background: var(--surface); transition: all 0.15s;
+}
+.delivery-option input:checked + .delivery-pill {
+    border-color: var(--accent); color: var(--accent); background: var(--accent-subtle);
+}
+.delivery-pill:hover { border-color: var(--accent); }
+
 /* --- Result --- */
 .result-content {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
