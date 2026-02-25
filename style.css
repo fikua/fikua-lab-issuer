@@ -212,11 +212,6 @@ main {
     display: flex; justify-content: space-between; align-items: center;
     padding-top: 0.5rem; border-top: 1px solid var(--border);
 }
-.checkbox-label {
-    display: flex; align-items: center; gap: 0.4rem;
-    font-size: 0.8rem; color: var(--text-muted); cursor: pointer;
-}
-.checkbox-label input { accent-color: var(--accent); }
 .form-defaults-wrap { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
 
 /* --- Delivery method selector --- */

@@ -210,20 +210,21 @@
             document.getElementById('delivery-screen').checked = true;
         }
 
-        // Reset grant type to pre-authorized and update tx_code visibility
+        // Reset grant type and tx_code to defaults
         document.getElementById('grant-pre-auth').checked = true;
+        document.getElementById('tx-code-off').checked = true;
         updateTxCodeVisibility();
 
         showStep('form');
     }
 
-    // Grant type toggle: hide tx_code checkbox when authorization_code is selected
+    // Grant type toggle: hide tx_code selector when authorization_code is selected
     function updateTxCodeVisibility() {
         const isPreAuth = document.getElementById('grant-pre-auth').checked;
-        const txCodeLabel = document.getElementById('tx-code-label');
-        txCodeLabel.classList.toggle('hidden', !isPreAuth);
+        const txCodeSelector = document.getElementById('tx-code-selector');
+        txCodeSelector.classList.toggle('hidden', !isPreAuth);
         if (!isPreAuth) {
-            document.getElementById('chk-tx-code').checked = false;
+            document.getElementById('tx-code-off').checked = true;
         }
     }
 
@@ -264,7 +265,7 @@
                 if (!excludedKeys.has(key)) credentialData[key] = value;
             }
 
-            const txCodeRequired = document.getElementById('chk-tx-code').checked;
+            const txCodeRequired = document.getElementById('tx-code-on').checked;
             const deliveryMethod = document.querySelector('input[name="delivery_method"]:checked')?.value || 'screen';
             const grantType = document.querySelector('input[name="grant_type"]:checked')?.value || 'pre-authorized_code';
 

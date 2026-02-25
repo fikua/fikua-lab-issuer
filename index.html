@@ -100,11 +100,24 @@
                             </label>
                         </div>
                     </div>
+                    <div id="tx-code-selector" class="delivery-method">
+                        <span class="delivery-label">Verification code (OTP)</span>
+                        <div class="delivery-options">
+                            <label class="delivery-option">
+                                <input type="radio" name="tx_code_required" value="off" id="tx-code-off" checked>
+                                <span class="delivery-pill">Off</span>
+                            </label>
+                            <label class="delivery-option">
+                                <input type="radio" name="tx_code_required" value="on" id="tx-code-on">
+                                <span class="delivery-pill">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                    Required
+                                </span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="form-actions">
-                        <label class="checkbox-label" id="tx-code-label">
-                            <input type="checkbox" id="chk-tx-code">
-                            <span>Require transaction code</span>
-                        </label>
+                        <div></div>
                         <button type="submit" class="btn btn-accent">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                             Issue Credential
