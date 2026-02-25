@@ -66,6 +66,48 @@
     // Backend-managed claims that the form should not show
     const HIDDEN_CLAIMS = new Set(['issuing_authority', 'issuing_country']);
 
+    // Default test data per credential type (keyed by config ID prefix)
+    const DEFAULT_DATA = {
+        'eu.europa.ec.eudi.pid': {
+            given_name: 'Max',
+            family_name: 'Mustermann',
+            birth_date: '1990-06-15',
+        },
+        'org.iso.18013.5.1.mDL': {
+            family_name: 'Mustermann',
+            given_name: 'Max',
+            birth_date: '1990-06-15',
+            issue_date: '2025-01-01',
+            expiry_date: '2035-01-01',
+            document_number: 'DL-2025-000042',
+            driving_privileges: 'B, AM',
+        },
+        'student-id': {
+            identifier: 'STU-2025-001',
+            familyName: 'Mustermann',
+            firstName: 'Max',
+            displayName: 'Max Mustermann',
+            commonName: 'M. Mustermann',
+            dateOfBirth: '2000-03-20',
+            mail: 'max.mustermann@university.edu',
+            schacPersonalUniqueCode: 'urn:schac:personalUniqueCode:int:esi:university.edu:12345',
+            schacPersonalUniqueID: 'urn:schac:personalUniqueID:int:esi:university.edu:12345',
+            schacHomeOrganization: 'university.edu',
+            eduPersonPrincipalName: 'max@university.edu',
+            eduPersonPrimaryAffiliation: 'student',
+            eduPersonAffiliation: 'student;member',
+            eduPersonScopedAffiliation: 'student@university.edu',
+            eduPersonAssurance: 'https://refeds.org/assurance/IAP/medium',
+        },
+    };
+
+    function getDefaults(configId) {
+        for (const prefix of Object.keys(DEFAULT_DATA)) {
+            if (configId.startsWith(prefix)) return DEFAULT_DATA[prefix];
+        }
+        return null;
+    }
+
     // S2: Tab switching
     const tabs = document.querySelectorAll('.tab');
     const tabIssue = document.getElementById('tab-issue');
@@ -154,6 +196,21 @@
                     <input type="${inputType}" id="field-${esc(path)}" name="${esc(path)}" required>
                 </div>`;
         });
+
+        // Add "Fill defaults" button if defaults exist for this config
+        const defaults = getDefaults(configId);
+        if (defaults) {
+            const btnWrap = document.createElement('div');
+            btnWrap.className = 'form-defaults-wrap';
+            btnWrap.innerHTML = `<button type="button" id="btn-fill-defaults" class="btn btn-sm">Fill test data</button>`;
+            fieldsEl.prepend(btnWrap);
+            document.getElementById('btn-fill-defaults').addEventListener('click', () => {
+                for (const [key, value] of Object.entries(defaults)) {
+                    const input = document.getElementById('field-' + key);
+                    if (input) input.value = value;
+                }
+            });
+        }
 
         showStep('form');
     }

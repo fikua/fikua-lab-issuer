@@ -217,6 +217,7 @@ main {
     font-size: 0.8rem; color: var(--text-muted); cursor: pointer;
 }
 .checkbox-label input { accent-color: var(--accent); }
+.form-defaults-wrap { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
 
 /* --- Result --- */
 .result-content {
