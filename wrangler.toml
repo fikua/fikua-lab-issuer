@@ -1,7 +1,14 @@
-# Cloudflare Workers (Static Assets) configuration
+# Cloudflare Worker (Static Assets + handler) configuration.
+#
+# The frontend ships as static assets, but the Worker function in src/index.ts
+# proxies OID4VC / well-known / health paths to the Fikua Lab backend
+# (api.lab.fikua.com) so the wallet sees real JSON instead of index.html.
+
 name = "fikua-lab-issuer"
+main = "src/index.ts"
 compatibility_date = "2026-05-22"
 
 [assets]
 directory = "./"
+binding = "ASSETS"
 not_found_handling = "404-page"

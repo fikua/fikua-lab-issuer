@@ -15,5 +15,6 @@ Thumbs.db
 .wrangler/
 .dev.vars
 
-# Node (in case anyone runs wrangler dev locally)
+# Node (for the Worker code + wrangler)
 node_modules/
+*.tsbuildinfo
