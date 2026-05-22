@@ -72,6 +72,24 @@ export default {
         // Static asset lookup: strip the role prefix so /issuer/foo.css
         // hits public/foo.css instead of public/issuer/foo.css.
         const rewritten = new URL(relative + url.search, url.origin);
-        return env.ASSETS.fetch(new Request(rewritten, request));
+        const response = await env.ASSETS.fetch(new Request(rewritten, request));
+
+        // Workers Static Assets emits a directory-canonical 301/307 to
+        // /<dir>/ when you hit /<dir>. Without rewriting the Location
+        // header back the browser navigates to /<dir>/ at the zone root
+        // and loses the role prefix. Re-prepend it.
+        if (response.status === 301 || response.status === 307 || response.status === 308) {
+            const loc = response.headers.get('location');
+            if (loc && loc.startsWith('/') && !loc.startsWith(ROLE_PREFIX + '/') && loc !== ROLE_PREFIX) {
+                const newHeaders = new Headers(response.headers);
+                newHeaders.set('location', ROLE_PREFIX + loc);
+                return new Response(response.body, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: newHeaders,
+                });
+            }
+        }
+        return response;
     },
 };
