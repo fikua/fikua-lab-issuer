@@ -10,6 +10,7 @@ main = "src/index.ts"
 compatibility_date = "2026-05-22"
 
 routes = [
+    { pattern = "lab.fikua.com/issuer", custom_domain = false, zone_name = "fikua.com" },
     { pattern = "lab.fikua.com/issuer/*", custom_domain = false, zone_name = "fikua.com" }
 ]
 

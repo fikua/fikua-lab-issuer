@@ -27,13 +27,19 @@
         return div.innerHTML;
     }
 
+    // The issuer is served at lab.fikua.com/issuer/ so backend paths must
+    // be prefixed with /issuer/ to reach the role's Worker (which strips
+    // the prefix before forwarding to the backend).
+    const API_PREFIX = '/issuer';
+
     async function api(method, path, body) {
         const opts = { method, headers: {} };
         if (body) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         }
-        const res = await fetch(path, opts);
+        const url = path.startsWith('/') ? API_PREFIX + path : path;
+        const res = await fetch(url, opts);
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error_description || err.error || `HTTP ${res.status}`);
