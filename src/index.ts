@@ -61,6 +61,9 @@ export default {
         if (matchesBackend(relative)) {
             return proxyToBackend(request, env, relative);
         }
-        return env.ASSETS.fetch(request);
+        // Static asset lookup: strip the role prefix so /issuer/foo.css
+        // hits public/foo.css instead of public/issuer/foo.css.
+        const rewritten = new URL(relative + url.search, url.origin);
+        return env.ASSETS.fetch(new Request(rewritten, request));
     },
 };
