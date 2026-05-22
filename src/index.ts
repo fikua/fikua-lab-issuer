@@ -54,6 +54,14 @@ async function proxyToBackend(request: Request, env: Env, relativePath: string):
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         const url = new URL(request.url);
+
+        // Canonical role URL ends with a slash: redirect /<role> → /<role>/
+        // so relative asset references (style.css, app.js, …) in index.html
+        // resolve against the correct base.
+        if (url.pathname === ROLE_PREFIX) {
+            return Response.redirect(url.origin + ROLE_PREFIX + '/' + url.search, 301);
+        }
+
         const relative = url.pathname.startsWith(ROLE_PREFIX)
             ? url.pathname.slice(ROLE_PREFIX.length) || '/'
             : url.pathname;
