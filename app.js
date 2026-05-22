@@ -17,7 +17,7 @@
 
 // S1-S8: Main application
 (() => {
-    const WALLET_URL = 'https://wallet.lab.fikua.com';
+    const WALLET_URL = 'https://lab.fikua.com/wallet';
 
     // S1: Helpers
     function esc(str) {
