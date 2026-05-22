@@ -1,0 +1,19 @@
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Wrangler local state
+.wrangler/
+.dev.vars
+
+# Node (in case anyone runs wrangler dev locally)
+node_modules/
