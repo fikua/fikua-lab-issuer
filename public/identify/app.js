@@ -191,13 +191,14 @@ const ISSUER_API = '/issuer/oid4vci/v1';
                 try {
                     certData = JSON.parse(atob(certParam));
                     // Spanish certs (FNMT, ACCV, …) put the CN as
-                    // "NOMBRE APELLIDO1 APELLIDO2 - NIF". Strip the
-                    // "- NIF" tail before splitting, then take the first
-                    // token as the given name and the rest as the surname.
+                    // "APELLIDO1 APELLIDO2 NOMBRE - NIF" — surnames first,
+                    // given name last. Strip the "- NIF" tail, then take
+                    // the last token as the given name and the rest as the
+                    // surname.
                     var cn = (certData.subject || '').replace(/\s*-\s*[A-Z0-9]+\s*$/, '').trim();
                     var nameParts = cn.split(/\s+/);
-                    var givenName = nameParts[0] || cn;
-                    var familyName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+                    var givenName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : cn;
+                    var familyName = nameParts.length > 1 ? nameParts.slice(0, -1).join(' ') : '';
 
                     document.getElementById('cert-summary-issuer').textContent = certData.issuer || '-';
                     document.getElementById('cert-summary-serial').textContent = certData.serial || '-';
