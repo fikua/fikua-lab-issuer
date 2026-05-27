@@ -116,7 +116,15 @@ const ISSUER_API = '/issuer/oid4vci/v1';
     }
 
     // Submit identification data to issuer
+    var submitInFlight = false;
     function submitIdentification(credentialData, sourceType, sourceRef) {
+        if (submitInFlight) return;
+        submitInFlight = true;
+        var submitBtn = document.getElementById('btn-form-submit');
+        var confirmBtn = document.getElementById('btn-confirm');
+        if (submitBtn) submitBtn.disabled = true;
+        if (confirmBtn) confirmBtn.disabled = true;
+
         showPhase('submitting');
         var body = {
             session: sessionToken,
@@ -136,13 +144,18 @@ const ISSUER_API = '/issuer/oid4vci/v1';
         })
         .then(function(data) {
             if (data.redirect) {
-                showPhase('success');
-                setTimeout(function() { window.location.href = data.redirect; }, 1500);
+                window.location.replace(data.redirect);
             } else {
+                submitInFlight = false;
+                if (submitBtn) submitBtn.disabled = false;
+                if (confirmBtn) confirmBtn.disabled = false;
                 showError('No redirect URL received from the issuer.');
             }
         })
         .catch(function(err) {
+            submitInFlight = false;
+            if (submitBtn) submitBtn.disabled = false;
+            if (confirmBtn) confirmBtn.disabled = false;
             showError('Identification failed: ' + err.message);
         });
     }
@@ -177,8 +190,13 @@ const ISSUER_API = '/issuer/oid4vci/v1';
             if (certParam) {
                 try {
                     certData = JSON.parse(atob(certParam));
-                    var nameParts = (certData.subject || '').split(' ');
-                    var givenName = nameParts[0] || certData.subject || '';
+                    // Spanish certs (FNMT, ACCV, …) put the CN as
+                    // "NOMBRE APELLIDO1 APELLIDO2 - NIF". Strip the
+                    // "- NIF" tail before splitting, then take the first
+                    // token as the given name and the rest as the surname.
+                    var cn = (certData.subject || '').replace(/\s*-\s*[A-Z0-9]+\s*$/, '').trim();
+                    var nameParts = cn.split(/\s+/);
+                    var givenName = nameParts[0] || cn;
                     var familyName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
                     document.getElementById('cert-summary-issuer').textContent = certData.issuer || '-';
