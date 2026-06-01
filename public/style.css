@@ -4,16 +4,16 @@
    ============================================ */
 
 :root {
-    --bg: #ffffff;
+    --bg: #FCFCFC;
     --surface: #ffffff;
     --surface-hover: #f1f5f9;
     --border: #e2e8f0;
     --text: #334155;
     --text-muted: #64748b;
     --heading: #0f172a;
-    --accent: #2A9D8F;
-    --accent-hover: #238578;
-    --accent-subtle: rgba(42, 157, 143, 0.08);
+    --accent: #1A4C9C;
+    --accent-hover: #143b78;
+    --accent-subtle: rgba(26, 76, 156, 0.08);
     --primary: #3b82f6;
     --primary-subtle: rgba(59, 130, 246, 0.1);
     --success: #10b981;
@@ -39,9 +39,9 @@
     --text: #e1e4ed;
     --text-muted: #8b90a0;
     --heading: #e2e8f0;
-    --accent: #2dd4bf;
-    --accent-hover: #5eead4;
-    --accent-subtle: rgba(45, 212, 191, 0.1);
+    --accent: #6FA0E8;
+    --accent-hover: #9cc0f3;
+    --accent-subtle: rgba(111, 160, 232, 0.1);
     --primary: #4f8ff7;
     --primary-subtle: rgba(79, 143, 247, 0.15);
     --success: #34d399;
