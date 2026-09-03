@@ -31,7 +31,7 @@ jobs:
     # setup checklist" step 4).
     environment:
       name: prd
-      url: https://issuer.fikua.com/healthz
+      url: https://issuer.fikua.com/health
 
     steps:
       - name: Checkout (for the compose file)
@@ -99,7 +99,7 @@ jobs:
             ISSUER_VERSION='$NORMALISED_TAG' sudo --preserve-env=ISSUER_VERSION docker compose up -d
           "
 
-      - name: Wait for /healthz to report ok
+      - name: Wait for /health to report ok
         # The image is built FROM scratch (no shell, no curl/wget inside
         # the container), and the container publishes no host port beyond
         # the 127.0.0.1-bound one — reach it by sharing its network
@@ -107,19 +107,19 @@ jobs:
         # (same trick as attestation-registry's deploy.yml).
         run: |
           for i in $(seq 1 30); do
-            body=$(ssh vps.fikua.com 'sudo docker run --rm --network container:fikua-lab-issuer curlimages/curl:latest -sf http://127.0.0.1:8080/healthz' || true)
+            body=$(ssh vps.fikua.com 'sudo docker run --rm --network container:fikua-lab-issuer curlimages/curl:latest -sf http://127.0.0.1:8080/health' || true)
             echo "attempt $i: $body" | head -c 400
             echo
             if echo "$body" | grep -q '"status":"ok"'; then
-              echo "/healthz is ok"
+              echo "/health is ok"
               exit 0
             fi
             sleep 5
           done
-          echo "/healthz did not report ok within 150s"
+          echo "/health did not report ok within 150s"
           exit 1
 
       - name: Smoke-test through Traefik (Host header)
         run: |
           ssh vps.fikua.com \
-            'curl -sIk -H "Host: issuer.fikua.com" https://127.0.0.1/healthz | head -5'
+            'curl -sIk -H "Host: issuer.fikua.com" https://127.0.0.1/health | head -5'

@@ -37,7 +37,7 @@ func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []s
 
 // Routes registers this handler's endpoints on mux.
 func (h *Handler) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", h.credentialIssuerMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.authServerMetadata)
 	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)

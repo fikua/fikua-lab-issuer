@@ -36,7 +36,7 @@ make run          # http://localhost:8080
 - `POST /oid4vci/v1/nonce` — c_nonce issuance, DPoP-validated once a session exists.
 - `POST /oid4vci/v1/credential` — credential issuance (SD-JWT VC or mdoc).
 - `POST /oid4vci/v1/notification` — no-op per OID4VCI §10.1 (this issuer doesn't yet track notification_id).
-- `GET /healthz` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).
+- `GET /health` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).
 
 ## UI
 
@@ -65,7 +65,7 @@ CI/CD mirrors `fikua-lab-attestation-registry`'s pipeline:
    release (gated behind the `prd` GitHub Environment's required
    reviewers). SSHes into the VPS through a Cloudflare Access tunnel,
    syncs `compose.yaml` to `/opt/vps/projects/fikua-lab-issuer/`, runs
-   `docker compose pull && up -d`, then polls `/healthz`.
+   `docker compose pull && up -d`, then polls `/health`.
 
 Public at `https://issuer.fikua.com` — a plain Cloudflare-proxied A
 record straight to Traefik, same pattern as `fikua-lab-attestation-registry`.
