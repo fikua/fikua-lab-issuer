@@ -1,20 +1,4 @@
-# Editors
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# macOS / Windows
+/bin/
+*.test
+*.out
 .DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Wrangler local state
-.wrangler/
-.dev.vars
-
-# Node (for the Worker code + wrangler)
-node_modules/
-*.tsbuildinfo

@@ -1,0 +1,66 @@
+# Fikua Lab Issuer — deployment
+#
+# Image: docker.io/fikua/fikua-lab-issuer (published by the
+# fikua/fikua-lab-issuer repo's release.yml on every published release /
+# push to main).
+#
+# Source of truth for this file:
+#   fikua-platform-iac/projects/fikua-lab-issuer/compose.yaml
+#
+# A copy travels with the app repo at fikua-lab-issuer/compose.yaml so
+# deploy.yml can push it to the host on every deploy — keep both in sync
+# (same convention as niu / fikua-lab-attestation-registry).
+#
+# Host path on the VPS: /opt/vps/projects/fikua-lab-issuer/
+#
+# Phase 1: no database yet — credential-configuration/session/issuance
+# persistence lands in a later phase, at which point this file gains a
+# Postgres dependency and env vars (see the migration plan). Same
+# deployment shape as fikua-lab-attestation-registry: direct
+# Cloudflare-proxied hostname -> Traefik -> container, no Tunnel, no
+# Cloudflare Access, no Worker in front.
+
+services:
+  fikua-lab-issuer:
+    image: ${DOCKER_REGISTRY:-fikua}/fikua-lab-issuer:${ISSUER_VERSION:-latest}
+    container_name: fikua-lab-issuer
+    restart: unless-stopped
+    networks:
+      - traefik-public
+    labels:
+      # Direct Cloudflare-proxied A record -> Traefik websecure (443),
+      # same pattern as fikua-lab-attestation-registry. Cert comes from
+      # the existing *.fikua.com wildcard already configured on the
+      # `cloudflare` certResolver — no new ACME request needed.
+      traefik.enable: "true"
+      traefik.http.routers.fikua-lab-issuer.rule: "Host(`issuer.fikua.com`)"
+      traefik.http.routers.fikua-lab-issuer.entrypoints: "websecure"
+      traefik.http.routers.fikua-lab-issuer.tls: "true"
+      traefik.http.routers.fikua-lab-issuer.service: "fikua-lab-issuer"
+      traefik.http.services.fikua-lab-issuer.loadbalancer.server.port: "8080"
+      # Rate limit: mirrors attestation-registry's. sourcecriterion.requestheadername
+      # is REQUIRED — without it the limiter sees rotating Cloudflare edge
+      # IPs (the ratelimit middleware runs before the
+      # forwardedHeaders/X-Forwarded-For rewrite) and never fires.
+      traefik.http.routers.fikua-lab-issuer.middlewares: "fikua-lab-issuer-ratelimit"
+      traefik.http.middlewares.fikua-lab-issuer-ratelimit.ratelimit.average: "60"
+      traefik.http.middlewares.fikua-lab-issuer-ratelimit.ratelimit.period: "1m"
+      traefik.http.middlewares.fikua-lab-issuer-ratelimit.ratelimit.burst: "100"
+      traefik.http.middlewares.fikua-lab-issuer-ratelimit.ratelimit.sourcecriterion.requestheadername: "Cf-Connecting-Ip"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "25m"
+        max-file: "3"
+
+networks:
+  # Shared L7 fabric owned by platform-services — joined for Traefik
+  # routing.
+  traefik-public:
+    name: traefik-public
+    external: true
