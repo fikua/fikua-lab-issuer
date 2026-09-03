@@ -9,19 +9,28 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
+	"github.com/fikua/fikua-lab-issuer/internal/mdoc"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
 	"github.com/fikua/fikua-lab-issuer/internal/oid4vci"
 	"github.com/fikua/fikua-lab-issuer/internal/sdjwt"
 	"github.com/fikua/fikua-lab-issuer/internal/session"
 )
 
-// PIDConfigID is the only credential_configuration_id this slice issues —
-// Student ID is not carried over from the Java issuer (see the migration
-// plan), and mdoc/authorization_code/HAIP/PAR/DPoP land in later slices.
-const PIDConfigID = "urn:eudi:pid:1"
+// PIDConfigID and PIDMdocConfigID are the only credential_configuration_ids
+// this slice issues — Student ID is not carried over from the Java issuer
+// (see the migration plan), and authorization_code/HAIP/PAR/DPoP land in
+// later slices. PIDMdocConfigID matches credentialconfig's
+// configurationID naming (scheme id + ".mdoc" suffix for the mdoc format).
+const (
+	PIDConfigID     = "urn:eudi:pid:1"
+	PIDMdocConfigID = "urn:eudi:pid:1.mdoc"
+)
 
-const pidVCT = "urn:eudi:pid:1"
-const pidSubjectPrefix = "urn:fikua:pid:"
+const (
+	pidVCT           = "urn:eudi:pid:1"
+	pidDocType       = "eu.europa.ec.eudi.pid.1"
+	pidSubjectPrefix = "urn:fikua:pid:"
+)
 
 // Service implements the pre-authorized_code OID4VCI flow and SD-JWT PID
 // issuance — a direct port of the Java issuer's IssuanceService, scoped to
@@ -159,7 +168,7 @@ func (s *Service) IssueCredential(accessToken string, body []byte) (oid4vci.Cred
 	if req.CredentialIdentifier != "" {
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.UnknownCredentialIdentifier, "Identifier-based credential requests are not supported")
 	}
-	if req.CredentialConfigurationID != PIDConfigID {
+	if req.CredentialConfigurationID != PIDConfigID && req.CredentialConfigurationID != PIDMdocConfigID {
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.UnknownCredentialConfiguration, "Unknown credential_configuration_id: "+req.CredentialConfigurationID)
 	}
 
@@ -185,7 +194,12 @@ func (s *Service) IssueCredential(accessToken string, body []byte) (oid4vci.Cred
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Issuance record has no credential data. Provide credential_data when triggering issuance.")
 	}
 
-	credential, err := s.buildSDJWTCredential(walletKey, rec)
+	var credential string
+	if req.CredentialConfigurationID == PIDMdocConfigID {
+		credential, err = s.buildMdocCredential(walletKey, rec)
+	} else {
+		credential, err = s.buildSDJWTCredential(walletKey, rec)
+	}
 	if err != nil {
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid credential request: "+err.Error())
 	}
@@ -233,6 +247,27 @@ func (s *Service) buildSDJWTCredential(walletKey jwk.Key, rec Record) (string, e
 	builder.PlainClaim("issuing_country", "ES")
 
 	return builder.Build()
+}
+
+func (s *Service) buildMdocCredential(walletKey jwk.Key, rec Record) (string, error) {
+	var claims map[string]any
+	if err := json.Unmarshal([]byte(rec.CredentialData), &claims); err != nil {
+		return "", fmt.Errorf("parsing credential_data: %w", err)
+	}
+
+	builder := mdoc.NewBuilder(s.issuerKey).
+		DocType(pidDocType).
+		Namespace(pidDocType).
+		DeviceKey(walletKey).
+		X5CChain(s.issuerKey.X5CChain())
+
+	for name, value := range claims {
+		builder.Element(name, fmt.Sprintf("%v", value))
+	}
+	builder.Element("issuing_authority", "Fikua Lab")
+	builder.Element("issuing_country", "ES")
+
+	return builder.BuildBase64URL()
 }
 
 // generateTxCode returns a uniformly random 6-digit numeric string
