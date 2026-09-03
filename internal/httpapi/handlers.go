@@ -39,6 +39,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", h.credentialIssuerMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.authServerMetadata)
 	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)
+	mux.HandleFunc("GET /oid4vci/v1/issuance", h.listIssuanceRecords)
 	mux.HandleFunc("POST /oid4vci/v1/issuance", h.triggerIssuance)
 	mux.HandleFunc("POST /oid4vci/v1/par", h.par)
 	mux.HandleFunc("GET /oid4vci/v1/authorize", h.authorize)

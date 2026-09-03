@@ -4,6 +4,7 @@
 package issuance
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -100,6 +101,71 @@ func (s *Store) UpdateIssuerState(id, issuerState string) {
 	rec.UpdatedAt = time.Now()
 	s.records[id] = rec
 	s.byIssuerState[issuerState] = id
+}
+
+// allowedSortFields/allowedSortOrders restrict FindAll's sort/order
+// params to a safe allowlist, matching the Java issuer's
+// JdbcIssuanceStore guard (there, against SQL injection; here, just
+// against an unrecognized field silently no-op'ing wrong).
+var allowedSortFields = map[string]bool{
+	"created_at": true, "updated_at": true, "status": true, "credential_type": true,
+}
+
+// FindAll returns a page of records ordered by sortField/sortOrder
+// (falling back to created_at/desc if either is not in the allowlist),
+// plus the total record count.
+func (s *Store) FindAll(offset, limit int, sortField, sortOrder string) ([]Record, int) {
+	if !allowedSortFields[sortField] {
+		sortField = "created_at"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	s.mu.Lock()
+	all := make([]Record, 0, len(s.records))
+	for _, rec := range s.records {
+		all = append(all, rec)
+	}
+	s.mu.Unlock()
+
+	sort.Slice(all, func(i, j int) bool {
+		less := sortLess(all[i], all[j], sortField)
+		if sortOrder == "desc" {
+			return !less
+		}
+		return less
+	})
+
+	total := len(all)
+	if offset >= total {
+		return nil, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total
+}
+
+// Count returns the total number of records.
+func (s *Store) Count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.records)
+}
+
+func sortLess(a, b Record, field string) bool {
+	switch field {
+	case "updated_at":
+		return a.UpdatedAt.Before(b.UpdatedAt)
+	case "status":
+		return a.Status < b.Status
+	case "credential_type":
+		return a.CredentialType < b.CredentialType
+	default:
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
 }
 
 func (s *Store) mutate(id string, fn func(*Record)) {

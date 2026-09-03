@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
@@ -19,6 +20,32 @@ func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+func (h *Handler) listIssuanceRecords(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page := parseIntParam(q.Get("page"), 1)
+	size := parseIntParam(q.Get("size"), 20)
+	sort := q.Get("sort")
+	if sort == "" {
+		sort = "created_at"
+	}
+	order := q.Get("order")
+	if order == "" {
+		order = "desc"
+	}
+	writeJSON(w, http.StatusOK, h.issuance.ListIssuanceRecords(page, size, sort, order))
+}
+
+func parseIntParam(v string, fallback int) int {
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return fallback
+	}
+	return n
 }
 
 func (h *Handler) triggerIssuance(w http.ResponseWriter, r *http.Request) {
