@@ -3,25 +3,39 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 
+	"github.com/fikua/fikua-lab-issuer/internal/config"
 	"github.com/fikua/fikua-lab-issuer/internal/httpapi"
+	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
 	"github.com/fikua/fikua-lab-issuer/internal/webui"
 	"github.com/fikua/fikua-lab-issuer/web"
 )
 
 func main() {
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8080"
+	cfg := config.Load()
+
+	registry := registryclient.New(cfg.AttestationRegistryURL)
+	cache := registryclient.NewCache(registry)
+	// Blocking on boot is intentional: without a scheme catalogue this
+	// issuer has nothing to serve, so a registry outage at startup should
+	// fail loudly rather than come up empty. Once running, background
+	// refreshes are best-effort (see Cache.Start).
+	if err := cache.Start(context.Background(), cfg.RegistryRefreshInterval); err != nil {
+		log.Fatalf("loading attestation catalogue from %s: %v", cfg.AttestationRegistryURL, err)
 	}
-	// Set when this service is reached through a reverse-proxying Worker
-	// under a path prefix, so its own asset links point back through that
-	// prefix. Empty for local dev / direct access.
-	basePath := os.Getenv("BASE_PATH")
+
+	foundSchemes := 0
+	for _, schemeID := range cfg.IssuableSchemes {
+		if _, ok := cache.Get(schemeID); ok {
+			foundSchemes++
+		} else {
+			log.Printf("warning: configured issuable scheme %q not found in attestation-registry catalogue", schemeID)
+		}
+	}
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {
@@ -29,11 +43,11 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	httpapi.NewHandler().Routes(mux)
-	webui.NewHandler(staticFS, basePath).Routes(mux)
+	httpapi.NewHandler(cfg.BaseURL, cache, cfg.IssuableSchemes).Routes(mux)
+	webui.NewHandler(staticFS, cfg.BasePath).Routes(mux)
 
-	log.Printf("fikua-lab-issuer listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	log.Printf("fikua-lab-issuer listening on %s (issuing %d/%d configured schemes; %d total in catalogue from %s)", cfg.Addr, foundSchemes, len(cfg.IssuableSchemes), len(cache.All()), cfg.AttestationRegistryURL)
+	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
