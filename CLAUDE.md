@@ -39,11 +39,14 @@ oversight.
 
 Full OID4VCI/HAIP flow parity is implemented and verified end-to-end
 against a simulated wallet (PAR → authorize → token → nonce → credential,
-for both PID sd-jwt and mdoc). What remains before a production cutover:
-Postgres-backed persistence for issuance records (currently an in-memory
-stand-in, see `internal/issuance/store.go`) and pointing the real
-`issuer.fikua.com` hostname/DNS at this service instead of the Java
-issuer.
+for both PID sd-jwt and mdoc). Issuance records persist to Postgres when
+`FIKUA_DB_URL` is set (falls back to an in-memory store otherwise — fine
+for local dev, not for a real deployment). Signing can be local (PEM/
+ephemeral, `internal/crypto.LoadOrGenerate`) or remote via a Fikua Digital
+Signature Service CSC v2.0 instance (`internal/cscclient`, when
+`FIKUA_DSS_URL` is set). What remains before a production cutover:
+pointing the real `issuer.fikua.com` hostname/DNS at this service instead
+of the Java issuer.
 
 ## Architecture
 
@@ -54,14 +57,16 @@ internal/registryclient/   HTTP client for fikua-lab-attestation-registry + cach
 internal/credentialconfig/ AttestationScheme -> OID4VCI credential_configurations_supported
 internal/oid4vci/          metadata, offer, request/response, proof validator
 internal/oauth2/           DPoP, client attestation (ATCA), PKCE, error model
-internal/crypto/           signing key (EC P-256/ES256), JWK, PEM loader, wallet-provider trust anchor
+internal/crypto/           signing key abstraction (local EC P-256/ES256 or remote crypto.Signer), JWK, PEM loader, wallet-provider trust anchor
+internal/cscclient/        Fikua DSS (CSC v2.0) client — remote signing backend for internal/crypto
 internal/sdjwt/            SD-JWT builder
 internal/mdoc/             mdoc builder (ISO 18013-5, CBOR)
-internal/issuance/         HAIP OID4VCI flow: PAR, authorize, authorization_code token, nonce, credential, issuance listing
+internal/issuance/         HAIP OID4VCI flow: PAR, authorize, authorization_code token, nonce, credential, issuance listing; Postgres or in-memory record store
 internal/session/          in-memory session store (PAR requests, auth codes, access tokens, nonces)
 internal/httpapi/          JSON API — /oid4vci/v1/*, well-known endpoints
 internal/webui/            serves the embedded static UI
 web/static/                UI assets (HTML/CSS/JS), embedded into the binary
+db/                        embedded Postgres schema (schema.sql), applied idempotently at boot — no external migration tool
 ```
 
 ## Conventions

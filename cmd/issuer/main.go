@@ -4,12 +4,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"io/fs"
 	"log"
 	"net/http"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/fikua/fikua-lab-issuer/db"
 	"github.com/fikua/fikua-lab-issuer/internal/config"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
+	"github.com/fikua/fikua-lab-issuer/internal/cscclient"
 	"github.com/fikua/fikua-lab-issuer/internal/httpapi"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
@@ -40,7 +45,7 @@ func main() {
 		}
 	}
 
-	issuerKey, err := fikuacrypto.LoadOrGenerate(cfg.CertsDir)
+	issuerKey, err := loadSigningKey(cfg)
 	if err != nil {
 		log.Fatalf("loading signing key: %v", err)
 	}
@@ -54,8 +59,12 @@ func main() {
 		log.Printf("warning: no root-ca.crt found in %s — accepting any self-consistent client attestation (no Wallet Provider trust pinning)", cfg.CertsDir)
 	}
 
+	issuances, err := loadIssuanceStore(cfg)
+	if err != nil {
+		log.Fatalf("setting up issuance store: %v", err)
+	}
+
 	sessions := session.NewStore()
-	issuances := issuance.NewStore()
 	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, walletProviderAnchor)
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
@@ -71,4 +80,57 @@ func main() {
 	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// loadSigningKey builds the issuer's signing key: remotely via the Fikua
+// DSS's CSC API when cfg.DSSURL is set, or from cfg.CertsDir/an ephemeral
+// key otherwise (see fikuacrypto.LoadOrGenerate).
+func loadSigningKey(cfg config.Config) (*fikuacrypto.SigningKey, error) {
+	if cfg.DSSURL == "" {
+		return fikuacrypto.LoadOrGenerate(cfg.CertsDir)
+	}
+
+	log.Printf("signing via Fikua DSS at %s (credential=%s)", cfg.DSSURL, cfg.DSSCredentialID)
+	client := cscclient.New(cscclient.Config{
+		BaseURL:            cfg.DSSURL,
+		ClientID:           cfg.DSSClientID,
+		ClientSecret:       cfg.DSSClientSecret,
+		CredentialID:       cfg.DSSCredentialID,
+		CredentialPassword: cfg.DSSCredentialPassword,
+	})
+	signer, err := cscclient.NewSigner(context.Background(), client)
+	if err != nil {
+		return nil, err
+	}
+	leafDER, err := signer.LeafDER(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	// Only the leaf goes into x5c — see LeafDER's doc comment.
+	return fikuacrypto.NewRemote(signer, [][]byte{leafDER})
+}
+
+// loadIssuanceStore builds the issuance-record store: Postgres when
+// cfg.DBURL is set (pinged and schema-applied before use, so a
+// misconfigured or unreachable database fails loudly at boot rather than
+// on the first request), or an in-memory fallback otherwise — fine for
+// local development, but data is lost on every restart.
+func loadIssuanceStore(cfg config.Config) (issuance.RecordStore, error) {
+	if cfg.DBURL == "" {
+		log.Printf("warning: no FIKUA_DB_URL configured — using in-memory issuance store (data lost on restart)")
+		return issuance.NewStore(), nil
+	}
+
+	sqlDB, err := sql.Open("pgx", cfg.DBURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := sqlDB.PingContext(context.Background()); err != nil {
+		return nil, err
+	}
+	if _, err := sqlDB.ExecContext(context.Background(), db.Schema); err != nil {
+		return nil, err
+	}
+	log.Printf("issuance records persisted to Postgres")
+	return issuance.NewPostgresStore(sqlDB), nil
 }

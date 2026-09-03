@@ -44,6 +44,18 @@ make run          # http://localhost:8080
 browser) — plain HTML/CSS/JS, no build step, ported as-is from the
 previous Cloudflare Worker frontend.
 
+## Persistence
+
+Issuance records persist to Postgres when `FIKUA_DB_URL` is set (a
+Go-native DSN, e.g. `postgresql://user:pass@host:5432/dbname` — not the
+`jdbc:postgresql://` format `fikua-lab`'s Java services use). The schema
+(`db/schema.sql`) is embedded in the binary and applied idempotently at
+boot — no external migration tool. Without `FIKUA_DB_URL`, issuance
+records fall back to an in-memory store (data lost on restart) — fine for
+local development, not for a real deployment. Sessions (PAR requests,
+authorization codes, access tokens, nonces) always stay in-memory,
+matching the Java issuer.
+
 ## Build
 
 ```sh

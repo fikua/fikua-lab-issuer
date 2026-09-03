@@ -41,7 +41,7 @@ type Service struct {
 	baseURL      string
 	issuerKey    *fikuacrypto.SigningKey
 	sessions     *session.Store
-	issuances    *Store
+	issuances    RecordStore
 	jtis         *oauth2.JTIStore
 	attestations *oauth2.ClientAttestationValidator
 }
@@ -52,8 +52,9 @@ type Service struct {
 // `aud`/`htu`. walletProviderAnchor optionally pins client-attestation
 // (WIA) signature verification to a single trusted CA — pass nil to
 // accept any self-consistent WIA (no chain-of-trust check), matching the
-// Java issuer's "no root-ca.crt configured" fallback.
-func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances *Store, walletProviderAnchor *x509.Certificate) *Service {
+// Java issuer's "no root-ca.crt configured" fallback. issuances is either
+// the in-memory Store (dev/no-Postgres fallback) or a PostgresStore.
+func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, walletProviderAnchor *x509.Certificate) *Service {
 	return &Service{
 		baseURL:      baseURL,
 		issuerKey:    issuerKey,

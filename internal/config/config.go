@@ -24,8 +24,26 @@ type Config struct {
 	IssuableSchemes []string
 	// CertsDir holds issuer-cert.pem + issuer-key.pem for the signing key.
 	// If either is missing, an ephemeral CA-signed key is generated at
-	// startup instead (see internal/crypto.LoadOrGenerate).
+	// startup instead (see internal/crypto.LoadOrGenerate). Ignored when
+	// DSSURL is set — remote signing takes over instead.
 	CertsDir string
+	// DSSURL, if non-empty, switches this issuer to remote signing via a
+	// Fikua Digital Signature Service (CSC v2.0) instance at this base URL
+	// (e.g. "https://dss.fikua.com"), instead of the local
+	// CertsDir/ephemeral key. DSSClientID/DSSClientSecret authenticate as
+	// one CSC tenant; DSSCredentialID/DSSCredentialPassword identify and
+	// authorize that tenant's signing credential.
+	DSSURL                string
+	DSSClientID           string
+	DSSClientSecret       string
+	DSSCredentialID       string
+	DSSCredentialPassword string
+	// DBURL, if non-empty, switches issuance-record persistence to
+	// Postgres (a Go-native DSN, e.g. "postgres://fikua:pass@fikua-lab-issuer-db:5432/fikua_lab_issuer"
+	// — NOT the JDBC URL format fikua-lab's Java services use). Empty
+	// falls back to an in-memory store (data lost on restart), which is
+	// fine for local development but not for a real deployment.
+	DBURL string
 }
 
 // Load reads configuration from environment variables, applying defaults
@@ -39,6 +57,12 @@ func Load() Config {
 		RegistryRefreshInterval: 5 * time.Minute,
 		IssuableSchemes:         splitCSV(getenv("FIKUA_ISSUABLE_SCHEMES", "urn:eudi:pid:1,urn:fikua:padro:barcelona:1")),
 		CertsDir:                getenv("FIKUA_CERTS_DIR", "./certs"),
+		DSSURL:                  getenv("FIKUA_DSS_URL", ""),
+		DSSClientID:             getenv("FIKUA_DSS_CLIENT_ID", ""),
+		DSSClientSecret:         getenv("FIKUA_DSS_CLIENT_SECRET", ""),
+		DSSCredentialID:         getenv("FIKUA_DSS_CREDENTIAL_ID", ""),
+		DSSCredentialPassword:   getenv("FIKUA_DSS_CREDENTIAL_PASSWORD", ""),
+		DBURL:                   getenv("FIKUA_DB_URL", ""),
 	}
 }
 

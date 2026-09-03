@@ -13,19 +13,30 @@
 #
 # Host path on the VPS: /opt/vps/projects/fikua-lab-issuer/
 #
-# Phase 1: no database yet — credential-configuration/session/issuance
-# persistence lands in a later phase, at which point this file gains a
-# Postgres dependency and env vars (see the migration plan). Same
-# deployment shape as fikua-lab-attestation-registry: direct
-# Cloudflare-proxied hostname -> Traefik -> container, no Tunnel, no
-# Cloudflare Access, no Worker in front.
+# Issuance records persist in a dedicated Postgres instance
+# (fikua-lab-issuer-db), following the same one-Postgres-per-project
+# pattern as fikua-lab's own fikua-lab-db — there is no shared Postgres
+# across fikua-platform-iac projects. Sessions (PAR requests, auth codes,
+# access tokens, nonces) stay in-memory, matching the Java issuer's
+# InMemorySessionStore. Same deployment shape as
+# fikua-lab-attestation-registry otherwise: direct Cloudflare-proxied
+# hostname -> Traefik -> container, no Tunnel, no Cloudflare Access, no
+# Worker in front.
 
 services:
   fikua-lab-issuer:
     image: ${DOCKER_REGISTRY:-fikua}/fikua-lab-issuer:${ISSUER_VERSION:-latest}
     container_name: fikua-lab-issuer
     restart: unless-stopped
+    environment:
+      # Go-native DSN (postgresql://user:pass@host:port/db) — NOT the
+      # jdbc:postgresql:// format fikua-lab's Java services use.
+      FIKUA_DB_URL: postgresql://${FIKUA_ISSUER_POSTGRES_USER:-fikua}:${FIKUA_ISSUER_POSTGRES_PASSWORD}@fikua-lab-issuer-db:5432/fikua_lab_issuer?sslmode=disable
+    depends_on:
+      fikua-lab-issuer-db:
+        condition: service_healthy
     networks:
+      - default
       - traefik-public
     labels:
       # Direct Cloudflare-proxied A record -> Traefik websecure (443),
@@ -58,9 +69,44 @@ services:
         max-size: "25m"
         max-file: "3"
 
+  fikua-lab-issuer-db:
+    image: postgres:17-alpine
+    container_name: fikua-lab-issuer-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fikua_lab_issuer
+      POSTGRES_USER: ${FIKUA_ISSUER_POSTGRES_USER:-fikua}
+      POSTGRES_PASSWORD: ${FIKUA_ISSUER_POSTGRES_PASSWORD}
+    volumes:
+      - issuer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FIKUA_ISSUER_POSTGRES_USER:-fikua}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    # Internal-only: no ports:, no traefik labels, no traefik-public — only
+    # reachable from fikua-lab-issuer over the default compose network.
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "25m"
+        max-file: "3"
+
 networks:
   # Shared L7 fabric owned by platform-services — joined for Traefik
   # routing.
   traefik-public:
     name: traefik-public
+    external: true
+
+volumes:
+  # External volume with a fixed name so the deployment is decoupled from
+  # the compose project name (i.e. the host directory). Pre-create it with:
+  #   docker volume create fikua-lab-issuer-pgdata
+  issuer-pgdata:
+    name: fikua-lab-issuer-pgdata
     external: true
