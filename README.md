@@ -1,39 +1,91 @@
-# Fikua Lab — Issuer
+# fikua-lab-issuer
 
-OID4VCI Issuer frontend for the Fikua Lab. Served at
-**<https://issuer.lab.fikua.com>**.
+OID4VCI credential issuer for the Fikua Lab EUDI Wallet ecosystem.
 
-The static UI talks to the lab backend over `/oid4vci/v1/*` and
-`/.well-known/*`. The issuer URL (`https://issuer.lab.fikua.com`) is
-the **Credential Issuer identifier** referenced by every credential
-offer, every `.well-known/openid-credential-issuer` document, and every
-verifier that trusts it — so the hostname is part of the spec, not just
-DNS convenience (see ADR 0008).
+Standalone Go service (single binary, no dependency on `fikua-lab`'s Java
+backend) that serves both the JSON/OID4VCI API and the issuance UI — same
+shape as [`fikua-lab-attestation-registry`](https://github.com/fikua/fikua-lab-attestation-registry),
+from which it fetches credential-scheme definitions (claims, display
+metadata, format info) over HTTP instead of hardcoding them.
 
-## What lives here
+This is a rewrite of `fikua-lab`'s Java/Javalin `fikua-issuer` module
+(`suite/backend/fikua-issuer`). Currently issues EUDI PID (SD-JWT VC +
+mdoc); Student ID is not carried over from the Java service.
 
-```text
-.
-├── index.html      Issuer UI
-├── style.css
-├── app.js
-├── favicon.svg
-└── shared/         Vendored shared assets (error pages)
+**HAIP-only**: this issuer implements a single protocol profile —
+authorization_code via Pushed Authorization Requests (RFC 9126), DPoP
+sender-constraining (RFC 9449), ATCA draft-07 client attestation, and
+PKCE S256 are all mandatory on every request. There is no profile
+selection and no pre-authorized_code/plain flow.
+
+## Run
+
+```sh
+make run          # http://localhost:8080
 ```
 
-Pure static — no build step.
+## API
 
-## Hosting
+- `GET /.well-known/openid-credential-issuer` / `GET /.well-known/oauth-authorization-server` — OID4VCI / RFC 8414 metadata.
+- `GET /oid4vci/v1/jwks` — issuer's public JWK Set.
+- `POST /oid4vci/v1/issuance` — trigger an issuance, returns an authorization_code credential offer.
+- `GET /oid4vci/v1/issuance` — paginated, sortable issuance record listing.
+- `POST /oid4vci/v1/par` — Pushed Authorization Request.
+- `GET /oid4vci/v1/authorize` — resolves a PAR request_uri into an authorization code (redirect).
+- `POST /oid4vci/v1/token` — authorization_code grant, DPoP-bound.
+- `POST /oid4vci/v1/nonce` — c_nonce issuance, DPoP-validated once a session exists.
+- `POST /oid4vci/v1/credential` — credential issuance (SD-JWT VC or mdoc).
+- `POST /oid4vci/v1/notification` — no-op per OID4VCI §10.1 (this issuer doesn't yet track notification_id).
+- `GET /health` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).
 
-- **Production:** Cloudflare Workers Static Assets (project
-  `fikua-lab-issuer`), custom domain `issuer.lab.fikua.com`.
-- **Backend reverse-proxy:** `/.well-known/*`, `/oid4vci/v1/*` and
-  `/health` are proxied to the lab backend at the edge (Cloudflare
-  Worker / Page Rule), which speaks the OID4VCI protocol.
+## UI
 
-## Architecture decisions
+`/` serves the issuance UI (credential picker, issuance form, records
+browser) — plain HTML/CSS/JS, no build step, ported as-is from the
+previous Cloudflare Worker frontend.
 
-- ADR 0008 — Fikua Lab frontends on Cloudflare Workers.
+## Persistence
+
+Issuance records persist to Postgres when `FIKUA_DB_URL` is set (a
+Go-native DSN, e.g. `postgresql://user:pass@host:5432/dbname` — not the
+`jdbc:postgresql://` format `fikua-lab`'s Java services use). The schema
+(`db/schema.sql`) is embedded in the binary and applied idempotently at
+boot — no external migration tool. Without `FIKUA_DB_URL`, issuance
+records fall back to an in-memory store (data lost on restart) — fine for
+local development, not for a real deployment. Sessions (PAR requests,
+authorization codes, access tokens, nonces) always stay in-memory,
+matching the Java issuer.
+
+## Build
+
+```sh
+make build        # bin/issuer, static binary, no CGO
+```
+
+Docker image is built `FROM scratch` — no runtime dependencies, single
+static binary.
+
+## Deployment
+
+CI/CD mirrors `fikua-lab-attestation-registry`'s pipeline:
+
+1. `build.yml` — vet/build/test on every push and PR.
+2. `release.yml` — on push to `main` or a published release, builds a
+   multi-arch image and pushes `docker.io/fikua/fikua-lab-issuer` to
+   Docker Hub.
+3. `deploy.yml` — manually dispatched, or auto-triggered by a published
+   release (gated behind the `prd` GitHub Environment's required
+   reviewers). SSHes into the VPS through a Cloudflare Access tunnel,
+   syncs `compose.yaml` to `/opt/vps/projects/fikua-lab-issuer/`, runs
+   `docker compose pull && up -d`, then polls `/health`.
+
+Public at `https://issuer.fikua.com` — a plain Cloudflare-proxied A
+record straight to Traefik, same pattern as `fikua-lab-attestation-registry`.
+No Cloudflare Access, no Tunnel, no Worker in front.
+
+Required repo secrets (same as `fikua-lab-attestation-registry`):
+`DOCKER_USERNAME`, `DOCKER_TOKEN`, `VPS_SSH_PRIVATE_KEY`,
+`CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`.
 
 ## License
 
