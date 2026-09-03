@@ -363,10 +363,6 @@ components:
           type: string
         notification_endpoint:
           type: string
-        credential_response_encryption:
-          type: object
-        batch_credential_issuance:
-          type: object
         credential_configurations_supported:
           type: object
           additionalProperties: true
