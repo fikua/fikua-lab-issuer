@@ -23,19 +23,13 @@ type Display struct {
 }
 
 // BuildCredentialIssuerMetadata assembles the Credential Issuer Metadata
-// document. haip controls whether credential_response_encryption is
-// advertised (required for the HAIP profile) — phase 2 only serves the
-// plain profile, so haip is always false for now; it's threaded through
-// already so phase 3's profile-aware wiring doesn't need to touch this
-// function's signature.
-func BuildCredentialIssuerMetadata(baseURL string, credentialConfigs map[string]any, haip bool) CredentialIssuerMetadata {
-	var responseEncryption map[string]any
-	if haip {
-		responseEncryption = map[string]any{
-			"alg_values_supported": []string{"ECDH-ES"},
-			"enc_values_supported": []string{"A128GCM", "A256GCM"},
-			"encryption_required":  false,
-		}
+// document. This issuer is HAIP-only, so credential_response_encryption is
+// always advertised.
+func BuildCredentialIssuerMetadata(baseURL string, credentialConfigs map[string]any) CredentialIssuerMetadata {
+	responseEncryption := map[string]any{
+		"alg_values_supported": []string{"ECDH-ES"},
+		"enc_values_supported": []string{"A128GCM", "A256GCM"},
+		"encryption_required":  false,
 	}
 
 	return CredentialIssuerMetadata{

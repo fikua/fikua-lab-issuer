@@ -1,8 +1,7 @@
 package issuance
 
 import (
-	"crypto/rand"
-	"encoding/binary"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 
@@ -17,10 +16,8 @@ import (
 )
 
 // PIDConfigID and PIDMdocConfigID are the only credential_configuration_ids
-// this slice issues — Student ID is not carried over from the Java issuer
-// (see the migration plan), and authorization_code/HAIP/PAR/DPoP land in
-// later slices. PIDMdocConfigID matches credentialconfig's
-// configurationID naming (scheme id + ".mdoc" suffix for the mdoc format).
+// this issuer issues — Student ID is not carried over from the Java
+// issuer (see the migration plan).
 const (
 	PIDConfigID     = "urn:eudi:pid:1"
 	PIDMdocConfigID = "urn:eudi:pid:1.mdoc"
@@ -32,44 +29,58 @@ const (
 	pidSubjectPrefix = "urn:fikua:pid:"
 )
 
-// Service implements the pre-authorized_code OID4VCI flow and SD-JWT PID
-// issuance — a direct port of the Java issuer's IssuanceService, scoped to
-// this slice (no DPoP, no PAR, no client attestation, no mdoc).
+// requestURIPrefix is the PAR request_uri format prefix, per RFC 9126.
+const requestURIPrefix = "urn:ietf:params:oauth:request_uri:"
+
+// Service implements this issuer's OID4VCI flow: HAIP only —
+// authorization_code grant via PAR, with DPoP sender-constraining and
+// ATCA client attestation mandatory throughout, and PKCE (S256)
+// mandatory at the token endpoint. There is no plain/pre-authorized_code
+// profile — this issuer does not implement one.
 type Service struct {
-	baseURL   string
-	issuerKey *fikuacrypto.SigningKey
-	sessions  *session.Store
-	issuances *Store
+	baseURL      string
+	issuerKey    *fikuacrypto.SigningKey
+	sessions     *session.Store
+	issuances    *Store
+	jtis         *oauth2.JTIStore
+	attestations *oauth2.ClientAttestationValidator
 }
 
 // NewService builds a Service. baseURL is this issuer's own Credential
 // Issuer identifier (e.g. "https://issuer.fikua.com"), used as both the
-// SD-JWT `iss` claim and the expected proof JWT `aud`.
-func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances *Store) *Service {
-	return &Service{baseURL: baseURL, issuerKey: issuerKey, sessions: sessions, issuances: issuances}
+// SD-JWT/mdoc `iss`/docType binding and the expected proof/DPoP JWT
+// `aud`/`htu`. walletProviderAnchor optionally pins client-attestation
+// (WIA) signature verification to a single trusted CA — pass nil to
+// accept any self-consistent WIA (no chain-of-trust check), matching the
+// Java issuer's "no root-ca.crt configured" fallback.
+func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances *Store, walletProviderAnchor *x509.Certificate) *Service {
+	return &Service{
+		baseURL:      baseURL,
+		issuerKey:    issuerKey,
+		sessions:     sessions,
+		issuances:    issuances,
+		jtis:         oauth2.NewJTIStore(),
+		attestations: oauth2.NewClientAttestationValidator(walletProviderAnchor),
+	}
 }
 
-// TriggerIssuanceRequest is the POST /oid4vci/v1/issuance request body,
-// scoped to this slice's pre-authorized_code-only path.
+// TriggerIssuanceRequest is the POST /oid4vci/v1/issuance request body.
 type TriggerIssuanceRequest struct {
 	CredentialType string         `json:"credential_type"`
 	CredentialData map[string]any `json:"credential_data"`
 	SourceType     string         `json:"source_type"`
 	SourceRef      string         `json:"source_ref"`
-	TxCodeRequired bool           `json:"tx_code_required"`
 }
 
 // TriggerIssuanceResult is the POST /oid4vci/v1/issuance response body.
 type TriggerIssuanceResult struct {
 	IssuanceID      string `json:"issuance_id"`
-	TxCode          string `json:"tx_code,omitempty"`
-	CredentialOffer any    `json:"credential_offer,omitempty"`
+	CredentialOffer any    `json:"credential_offer"`
 }
 
-// TriggerIssuance creates an issuance record and a pre-authorized_code
-// credential offer for it — the pre-authorized_code branch of the Java
-// issuer's triggerIssuance (authorization_code/HAIP is a later slice, so
-// this slice always takes this branch).
+// TriggerIssuance creates an issuance record and an authorization_code
+// credential offer carrying an issuer_state that links the wallet's
+// later /authorize (via PAR) back to this record.
 func (s *Service) TriggerIssuance(req TriggerIssuanceRequest) (TriggerIssuanceResult, error) {
 	credentialType := req.CredentialType
 	if credentialType == "" {
@@ -86,75 +97,160 @@ func (s *Service) TriggerIssuance(req TriggerIssuanceRequest) (TriggerIssuanceRe
 
 	rec := s.issuances.Create(credentialType, string(credentialDataJSON), req.SourceType, req.SourceRef)
 
-	metadata := map[string]any{"issuanceRecordId": rec.ID}
-	var txCode string
-	if req.TxCodeRequired {
-		txCode = generateTxCode()
-		metadata["tx_code"] = txCode
+	issuerState := session.RandomToken(16)
+	s.issuances.UpdateIssuerState(rec.ID, issuerState)
+
+	offer := oid4vci.AuthorizationCodeOffer(s.baseURL, credentialType, issuerState)
+	s.issuances.UpdateStatus(rec.ID, "offer_created")
+
+	return TriggerIssuanceResult{IssuanceID: rec.ID, CredentialOffer: offer}, nil
+}
+
+// HandlePar implements the Pushed Authorization Request endpoint (RFC
+// 9126). Client attestation is mandatory; code_challenge_method, if
+// given, must be S256. Returns the request_uri and its (advertised, not
+// server-enforced — see the migration notes) 60s lifetime.
+func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader string) (requestURI string, expiresIn int, err error) {
+	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, params["client_assertion_type"], params["client_assertion"])
+	if attErr != nil {
+		return "", 0, attErr
+	}
+	if clientID == "" {
+		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
+	}
+
+	if method, ok := params["code_challenge_method"]; ok && method != "S256" {
+		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Only S256 code_challenge_method is supported")
+	}
+
+	requestURI = requestURIPrefix + session.RandomToken(16)
+	s.sessions.StoreParRequest(requestURI, params)
+	return requestURI, 60, nil
+}
+
+// AuthorizeResult is the outcome of GET /oid4vci/v1/authorize.
+type AuthorizeResult struct {
+	Code        string
+	RedirectURI string
+	State       string
+}
+
+// HandleAuthorize resolves a PAR request_uri into an authorization code,
+// bound to the issuance record referenced by the PAR params' issuer_state
+// (set by TriggerIssuance's offer). Only the client_id-bearing,
+// PAR-backed flow is implemented — this issuer has no client_id-less
+// wallet-initiated sub-flow.
+func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
+	if requestURI == "" {
+		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing request_uri")
+	}
+	params, ok := s.sessions.ConsumeParRequest(requestURI)
+	if !ok {
+		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired request_uri")
+	}
+
+	metadata := map[string]any{}
+	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
+		metadata["code_challenge"] = codeChallenge
+	}
+	if issuerState := params["issuer_state"]; issuerState != "" {
+		if rec, ok := s.issuances.FindByIssuerState(issuerState); ok {
+			metadata["issuanceRecordId"] = rec.ID
+		}
 	}
 
 	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
-	preAuthCode := s.sessions.CreatePreAuthCode(sess)
-	s.issuances.UpdatePreAuthCode(rec.ID, preAuthCode)
+	code := s.sessions.CreateAuthCode(sess)
 
-	offer := oid4vci.PreAuthorizedOffer(s.baseURL, credentialType, preAuthCode, req.TxCodeRequired)
-	s.issuances.UpdateStatus(rec.ID, "offer_created")
-
-	result := TriggerIssuanceResult{IssuanceID: rec.ID, CredentialOffer: offer}
-	if txCode != "" {
-		result.TxCode = txCode
-		s.issuances.UpdateTxCode(rec.ID, txCode)
-	}
-	return result, nil
+	return AuthorizeResult{Code: code, RedirectURI: params["redirect_uri"], State: params["state"]}, nil
 }
 
-// HandlePreAuthToken implements the pre-authorized_code grant at the token
-// endpoint.
-func (s *Service) HandlePreAuthToken(req oauth2.TokenRequest) (oauth2.TokenResponse, error) {
-	if req.PreAuthorizedCode == "" {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing pre-authorized_code")
+// HandleAuthCodeToken implements the authorization_code grant at the
+// token endpoint: client attestation and DPoP are validated, then the
+// authorization code is consumed (irrecoverably — a subsequent PKCE
+// failure does not un-consume it, matching upstream), then PKCE S256 is
+// verified before minting a DPoP-bound access token.
+func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHeader, popHeader string) (oauth2.TokenResponse, error) {
+	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, "", "")
+	if attErr != nil {
+		return oauth2.TokenResponse{}, attErr
 	}
-	sess, ok := s.sessions.ConsumePreAuthCode(req.PreAuthorizedCode)
-	if !ok {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid or expired pre-authorized_code")
+	if clientID == "" {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
 	}
 
-	if expected, hasTxCode := sess.Metadata["tx_code"].(string); hasTxCode {
-		if req.TxCode == "" || req.TxCode != expected {
-			return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid or missing tx_code")
-		}
+	dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/token", "", s.jtis)
+	if err != nil {
+		return oauth2.TokenResponse{}, err
+	}
+
+	if req.Code == "" {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing authorization code")
+	}
+	sess, ok := s.sessions.ConsumeAuthCode(req.Code)
+	if !ok {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid authorization code")
+	}
+
+	if req.CodeVerifier == "" {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing code_verifier")
+	}
+	storedChallenge, _ := sess.Metadata["code_challenge"].(string)
+	if storedChallenge == "" || !oauth2.VerifyPKCES256(req.CodeVerifier, storedChallenge) {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "PKCE verification failed")
 	}
 
 	cNonce := session.GenerateNonce()
 	s.sessions.RegisterNonce(cNonce)
 
-	tokenSession := session.Data{SessionID: sess.SessionID, CNonce: cNonce, Metadata: sess.Metadata}
+	tokenSession := session.Data{SessionID: sess.SessionID, CNonce: cNonce, DPoPKey: dpopKey, Metadata: sess.Metadata}
 	accessToken := s.sessions.CreateAccessToken(tokenSession)
 
-	return oauth2.BearerToken(accessToken), nil
+	return oauth2.DPoPToken(accessToken), nil
 }
 
-// GenerateNonce implements the nonce endpoint: it always registers a fresh
-// nonce in the global store, and additionally binds it to accessToken's
-// session as that session's cNonce when a valid access token is given.
-func (s *Service) GenerateNonce(accessToken string) string {
+// GenerateNonce implements the nonce endpoint. A fresh nonce is always
+// registered globally; if accessToken identifies a session, DPoP is
+// validated (mandatory whenever a session exists — this issuer does not
+// silently skip DPoP when the header is missing, unlike the Java
+// implementation it was ported from) and the session's cNonce is
+// updated.
+func (s *Service) GenerateNonce(accessToken, dpopHeader string) (string, error) {
 	nonce := session.GenerateNonce()
 	s.sessions.RegisterNonce(nonce)
+
 	if accessToken != "" {
-		if sess, ok := s.sessions.GetAccessTokenSession(accessToken); ok {
+		sess, ok := s.sessions.GetAccessTokenSession(accessToken)
+		if ok {
+			ath := oauth2.ComputeATH(accessToken)
+			dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/nonce", ath, s.jtis)
+			if err != nil {
+				return "", err
+			}
+			if err := requireMatchingThumbprint(sess.DPoPKey, dpopKey, "DPoP key mismatch at nonce endpoint"); err != nil {
+				return "", err
+			}
 			sess.CNonce = nonce
 			s.sessions.UpdateAccessTokenSession(accessToken, sess)
 		}
 	}
-	return nonce
+	return nonce, nil
 }
 
-// IssueCredential implements the credential endpoint for the
-// pre-authorized_code + PID sd-jwt path.
-func (s *Service) IssueCredential(accessToken string, body []byte) (oid4vci.CredentialResponse, error) {
+// IssueCredential implements the credential endpoint.
+func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (oid4vci.CredentialResponse, error) {
 	sess, ok := s.sessions.GetAccessTokenSession(accessToken)
 	if !ok {
 		return oid4vci.CredentialResponse{}, oauth2.Unauthorized(oauth2.InvalidToken, "Invalid access token")
+	}
+
+	ath := oauth2.ComputeATH(accessToken)
+	dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/credential", ath, s.jtis)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, err
+	}
+	if err := requireMatchingThumbprint(sess.DPoPKey, dpopKey, "DPoP key mismatch"); err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 
 	var req oid4vci.CredentialRequest
@@ -208,6 +304,30 @@ func (s *Service) IssueCredential(accessToken string, body []byte) (oid4vci.Cred
 	s.sessions.InvalidateNonce(sess.CNonce)
 
 	return oid4vci.SuccessResponse(credential), nil
+}
+
+// requireMatchingThumbprint enforces that dpopKey's RFC 7638 thumbprint
+// matches the one originally bound to the session at /token — the
+// pinning this issuer relies on to stop a stolen access token being used
+// with a different DPoP key. boundKey is nil if the session predates any
+// DPoP binding (shouldn't happen in this HAIP-only issuer, but guarded
+// defensively).
+func requireMatchingThumbprint(boundKey, presentedKey jwk.Key, mismatchMessage string) error {
+	if boundKey == nil {
+		return nil
+	}
+	expected, err := oauth2.DPoPThumbprint(boundKey)
+	if err != nil {
+		return oauth2.Unauthorized(oauth2.InvalidToken, "DPoP thumbprint verification failed")
+	}
+	actual, err := oauth2.DPoPThumbprint(presentedKey)
+	if err != nil {
+		return oauth2.Unauthorized(oauth2.InvalidToken, "DPoP thumbprint verification failed")
+	}
+	if expected != actual {
+		return oauth2.Unauthorized(oauth2.InvalidToken, mismatchMessage)
+	}
+	return nil
 }
 
 // validateProofNonce checks the proof JWT's nonce against either the
@@ -268,13 +388,4 @@ func (s *Service) buildMdocCredential(walletKey jwk.Key, rec Record) (string, er
 	builder.Element("issuing_country", "ES")
 
 	return builder.BuildBase64URL()
-}
-
-// generateTxCode returns a uniformly random 6-digit numeric string
-// ("100000"–"999999"), matching the Java issuer's generateTxCode.
-func generateTxCode() string {
-	var buf [4]byte
-	_, _ = rand.Read(buf[:])
-	n := binary.BigEndian.Uint32(buf[:]) % 900000
-	return fmt.Sprintf("%06d", 100000+n)
 }

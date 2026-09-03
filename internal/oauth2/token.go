@@ -1,36 +1,30 @@
 package oauth2
 
-const PreAuthorizedCodeGrantType = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+const AuthorizationCodeGrantType = "authorization_code"
 
 // TokenRequest is the token-endpoint request, parsed from form parameters.
-// Field names follow the OID4VCI/OAuth2 wire form keys, not Go convention —
-// note "pre-authorized_code" uses a hyphen on the wire, matching the actual
-// OID4VCI form parameter name.
 type TokenRequest struct {
-	GrantType         string
-	Code              string
-	RedirectURI       string
-	CodeVerifier      string
-	PreAuthorizedCode string
-	TxCode            string
+	GrantType    string
+	Code         string
+	RedirectURI  string
+	CodeVerifier string
 }
 
 // TokenRequestFromForm builds a TokenRequest from parsed form values.
 func TokenRequestFromForm(form map[string]string) TokenRequest {
 	return TokenRequest{
-		GrantType:         form["grant_type"],
-		Code:              form["code"],
-		RedirectURI:       form["redirect_uri"],
-		CodeVerifier:      form["code_verifier"],
-		PreAuthorizedCode: form["pre-authorized_code"],
-		TxCode:            form["tx_code"],
+		GrantType:    form["grant_type"],
+		Code:         form["code"],
+		RedirectURI:  form["redirect_uri"],
+		CodeVerifier: form["code_verifier"],
 	}
 }
 
-// IsPreAuthorizedCode reports whether this request uses the
-// pre-authorized_code grant.
-func (r TokenRequest) IsPreAuthorizedCode() bool {
-	return r.GrantType == PreAuthorizedCodeGrantType
+// IsAuthorizationCode reports whether this request uses the
+// authorization_code grant — the only grant this HAIP-only issuer
+// supports.
+func (r TokenRequest) IsAuthorizationCode() bool {
+	return r.GrantType == AuthorizationCodeGrantType
 }
 
 // TokenResponse is the token-endpoint success response.
@@ -40,9 +34,8 @@ type TokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-// BearerToken builds a bearer TokenResponse (pre-authorized_code grant —
-// no DPoP sender-constraining), with the same 86400s (24h) lifetime the
-// Java issuer uses.
-func BearerToken(accessToken string) TokenResponse {
-	return TokenResponse{AccessToken: accessToken, TokenType: "Bearer", ExpiresIn: 86400}
+// DPoPToken builds a DPoP-bound TokenResponse — this issuer's only token
+// type, since HAIP always requires DPoP sender-constraining.
+func DPoPToken(accessToken string) TokenResponse {
+	return TokenResponse{AccessToken: accessToken, TokenType: "DPoP", ExpiresIn: 86400}
 }

@@ -1,7 +1,8 @@
-// Package session holds ephemeral OID4VCI protocol state: pre-authorized
-// codes, access tokens, nonces, and stored credential offers. In-memory
-// only, matching the Java issuer's InMemorySessionStore — no TTL/expiry,
-// relies on single-use consumption for codes/nonces.
+// Package session holds ephemeral OID4VCI/OAuth2 protocol state: PAR
+// requests, authorization codes, access tokens, nonces, and stored
+// credential offers. In-memory only, matching the Java issuer's
+// InMemorySessionStore — no TTL/expiry, relies on single-use consumption
+// for codes/nonces.
 package session
 
 import (
@@ -9,12 +10,16 @@ import (
 	"encoding/base64"
 	"sync"
 	"time"
+
+	"github.com/lestrrat-go/jwx/v3/jwk"
 )
 
-// Data is the session state bound to an access token or pre-auth code.
+// Data is the session state bound to an authorization code or access
+// token.
 type Data struct {
 	SessionID string
 	CNonce    string
+	DPoPKey   jwk.Key // the DPoP proof key bound at /token; nil until then
 	CreatedAt time.Time
 	Metadata  map[string]any
 }
@@ -22,7 +27,8 @@ type Data struct {
 // Store is the in-memory session store.
 type Store struct {
 	mu               sync.Mutex
-	preAuthCodes     map[string]Data
+	parRequests      map[string]map[string]string
+	authCodes        map[string]Data
 	accessTokens     map[string]Data
 	nonces           map[string]struct{}
 	credentialOffers map[string]string
@@ -31,7 +37,8 @@ type Store struct {
 // NewStore builds an empty Store.
 func NewStore() *Store {
 	return &Store{
-		preAuthCodes:     make(map[string]Data),
+		parRequests:      make(map[string]map[string]string),
+		authCodes:        make(map[string]Data),
 		accessTokens:     make(map[string]Data),
 		nonces:           make(map[string]struct{}),
 		credentialOffers: make(map[string]string),
@@ -52,24 +59,45 @@ func GenerateNonce() string {
 	return RandomToken(32)
 }
 
-// CreatePreAuthCode stores session under a fresh pre-authorized_code.
-func (s *Store) CreatePreAuthCode(data Data) string {
+// StoreParRequest stores a Pushed Authorization Request's form params
+// under requestUri.
+func (s *Store) StoreParRequest(requestURI string, params map[string]string) {
+	s.mu.Lock()
+	s.parRequests[requestURI] = params
+	s.mu.Unlock()
+}
+
+// ConsumeParRequest atomically removes and returns the params stored
+// under requestURI. ok is false if unknown (already consumed, or never
+// stored).
+func (s *Store) ConsumeParRequest(requestURI string) (params map[string]string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	params, ok = s.parRequests[requestURI]
+	if ok {
+		delete(s.parRequests, requestURI)
+	}
+	return params, ok
+}
+
+// CreateAuthCode stores session under a fresh authorization code.
+func (s *Store) CreateAuthCode(data Data) string {
 	code := RandomToken(32)
 	s.mu.Lock()
-	s.preAuthCodes[code] = data
+	s.authCodes[code] = data
 	s.mu.Unlock()
 	return code
 }
 
-// ConsumePreAuthCode atomically removes and returns the session bound to
+// ConsumeAuthCode atomically removes and returns the session bound to
 // code. ok is false if the code is unknown (already consumed, or never
 // issued).
-func (s *Store) ConsumePreAuthCode(code string) (data Data, ok bool) {
+func (s *Store) ConsumeAuthCode(code string) (data Data, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, ok = s.preAuthCodes[code]
+	data, ok = s.authCodes[code]
 	if ok {
-		delete(s.preAuthCodes, code)
+		delete(s.authCodes, code)
 	}
 	return data, ok
 }

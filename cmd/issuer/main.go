@@ -46,9 +46,17 @@ func main() {
 	}
 	log.Printf("issuer signing key loaded (kid=%s)", issuerKey.KID())
 
+	walletProviderAnchor, err := fikuacrypto.LoadWalletProviderAnchor(cfg.CertsDir)
+	if err != nil {
+		log.Fatalf("loading wallet provider trust anchor: %v", err)
+	}
+	if walletProviderAnchor == nil {
+		log.Printf("warning: no root-ca.crt found in %s — accepting any self-consistent client attestation (no Wallet Provider trust pinning)", cfg.CertsDir)
+	}
+
 	sessions := session.NewStore()
 	issuances := issuance.NewStore()
-	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances)
+	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, walletProviderAnchor)
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {

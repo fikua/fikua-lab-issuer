@@ -37,8 +37,11 @@ func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []s
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", h.credentialIssuerMetadata)
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.authServerMetadata)
 	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)
 	mux.HandleFunc("POST /oid4vci/v1/issuance", h.triggerIssuance)
+	mux.HandleFunc("POST /oid4vci/v1/par", h.par)
+	mux.HandleFunc("GET /oid4vci/v1/authorize", h.authorize)
 	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
@@ -63,8 +66,12 @@ func (h *Handler) credentialIssuerMetadata(w http.ResponseWriter, r *http.Reques
 			configs[id] = cfg
 		}
 	}
-	metadata := oid4vci.BuildCredentialIssuerMetadata(h.baseURL, configs, false)
+	metadata := oid4vci.BuildCredentialIssuerMetadata(h.baseURL, configs)
 	writeJSON(w, http.StatusOK, metadata)
+}
+
+func (h *Handler) authServerMetadata(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, oid4vci.BuildHAIPAuthServerMetadata(h.baseURL))
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

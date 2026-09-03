@@ -7,26 +7,21 @@ type CredentialOffer struct {
 	Grants                     map[string]any `json:"grants"`
 }
 
-// TxCode describes the transaction code delivery mechanism, per OID4VCI
-// §4.1.1's pre-authorized_code grant object.
-type TxCode struct {
-	InputMode   string `json:"input_mode"`
-	Length      int    `json:"length"`
-	Description string `json:"description"`
-}
+const authorizationCodeGrant = "authorization_code"
 
-const preAuthorizedCodeGrant = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
-
-// PreAuthorizedOffer builds a Credential Offer for the pre-authorized_code
-// grant.
-func PreAuthorizedOffer(issuerURL, configID, preAuthCode string, txCodeRequired bool) CredentialOffer {
-	grant := map[string]any{"pre-authorized_code": preAuthCode}
-	if txCodeRequired {
-		grant["tx_code"] = TxCode{InputMode: "numeric", Length: 6, Description: "Enter the transaction code"}
+// AuthorizationCodeOffer builds a Credential Offer for the
+// authorization_code grant — the only grant this HAIP-only issuer
+// supports. issuerState, if non-empty, is included so the wallet's
+// subsequent /authorize (via PAR) can be linked back to the issuance
+// record that triggered this offer.
+func AuthorizationCodeOffer(issuerURL, configID, issuerState string) CredentialOffer {
+	grant := map[string]any{}
+	if issuerState != "" {
+		grant["issuer_state"] = issuerState
 	}
 	return CredentialOffer{
 		CredentialIssuer:           issuerURL,
 		CredentialConfigurationIDs: []string{configID},
-		Grants:                     map[string]any{preAuthorizedCodeGrant: grant},
+		Grants:                     map[string]any{authorizationCodeGrant: grant},
 	}
 }

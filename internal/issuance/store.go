@@ -1,6 +1,6 @@
-// Package issuance implements the pre-authorized_code OID4VCI flow and
-// SD-JWT credential building, plus the issuance-record store this slice
-// backs it with.
+// Package issuance implements this issuer's OID4VCI flow (HAIP:
+// authorization_code + PAR + DPoP + client attestation) and SD-JWT/mdoc
+// credential building, plus the issuance-record store it's backed by.
 package issuance
 
 import (
@@ -20,25 +20,22 @@ type Record struct {
 	SourceType     string
 	SourceRef      string
 	Status         string
-	PreAuthCode    string
-	OfferID        string
-	RecipientEmail string
-	TxCode         string
+	IssuerState    string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
 
 // Store is an in-memory stand-in for the Java issuer's Postgres-backed
-// IssuanceStore — this slice doesn't wire up Postgres yet (see the
-// migration plan's phase breakdown); persistence lands in a later slice.
+// IssuanceStore — Postgres wiring lands in a later slice.
 type Store struct {
-	mu      sync.Mutex
-	records map[string]Record
+	mu            sync.Mutex
+	records       map[string]Record
+	byIssuerState map[string]string // issuer_state -> record id
 }
 
 // NewStore builds an empty Store.
 func NewStore() *Store {
-	return &Store{records: make(map[string]Record)}
+	return &Store{records: make(map[string]Record), byIssuerState: make(map[string]string)}
 }
 
 // Create inserts a new Record, defaulting credentialData to "{}" if empty.
@@ -71,30 +68,38 @@ func (s *Store) FindByID(id string) (Record, bool) {
 	return rec, ok
 }
 
+// FindByIssuerState is a non-destructive lookup by issuer_state, used to
+// link a wallet's /authorize (via PAR) back to the issuance record that
+// triggered its credential offer.
+func (s *Store) FindByIssuerState(issuerState string) (Record, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.byIssuerState[issuerState]
+	if !ok {
+		return Record{}, false
+	}
+	rec, ok := s.records[id]
+	return rec, ok
+}
+
 // UpdateStatus sets a record's status.
 func (s *Store) UpdateStatus(id, status string) {
 	s.mutate(id, func(r *Record) { r.Status = status })
 }
 
-// UpdatePreAuthCode sets a record's linked pre-authorized_code.
-func (s *Store) UpdatePreAuthCode(id, code string) {
-	s.mutate(id, func(r *Record) { r.PreAuthCode = code })
-}
-
-// UpdateOfferID sets a record's linked stored-offer id.
-func (s *Store) UpdateOfferID(id, offerID string) {
-	s.mutate(id, func(r *Record) { r.OfferID = offerID })
-}
-
-// UpdateRecipientEmail sets a record's recipient email (for tx_code/email
-// delivery).
-func (s *Store) UpdateRecipientEmail(id, email string) {
-	s.mutate(id, func(r *Record) { r.RecipientEmail = email })
-}
-
-// UpdateTxCode sets a record's tx_code.
-func (s *Store) UpdateTxCode(id, txCode string) {
-	s.mutate(id, func(r *Record) { r.TxCode = txCode })
+// UpdateIssuerState sets a record's linked issuer_state and indexes it
+// for FindByIssuerState.
+func (s *Store) UpdateIssuerState(id, issuerState string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok {
+		return
+	}
+	rec.IssuerState = issuerState
+	rec.UpdatedAt = time.Now()
+	s.records[id] = rec
+	s.byIssuerState[issuerState] = id
 }
 
 func (s *Store) mutate(id string, fn func(*Record)) {
