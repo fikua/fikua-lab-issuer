@@ -23,6 +23,7 @@ type Handler struct {
 	issuableSchemes []string
 	issuerKey       *fikuacrypto.SigningKey
 	issuance        *issuance.Service
+	openAPISpec     []byte
 }
 
 // NewHandler builds an httpapi Handler. cache is the attestation-registry
@@ -30,9 +31,10 @@ type Handler struct {
 // issuableSchemes is the explicit allowlist of scheme ids to build
 // configurations for (the registry may define schemes this issuer isn't
 // meant to issue); issuerKey signs credentials and serves the JWK Set;
-// issuanceService implements the OID4VCI flows.
-func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []string, issuerKey *fikuacrypto.SigningKey, issuanceService *issuance.Service) *Handler {
-	return &Handler{baseURL: baseURL, cache: cache, issuableSchemes: issuableSchemes, issuerKey: issuerKey, issuance: issuanceService}
+// issuanceService implements the OID4VCI flows; openAPISpec is served at
+// /openapi.yaml and rendered by /swagger.
+func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []string, issuerKey *fikuacrypto.SigningKey, issuanceService *issuance.Service, openAPISpec []byte) *Handler {
+	return &Handler{baseURL: baseURL, cache: cache, issuableSchemes: issuableSchemes, issuerKey: issuerKey, issuance: issuanceService, openAPISpec: openAPISpec}
 }
 
 // Routes registers this handler's endpoints on mux.
@@ -49,6 +51,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
 	mux.HandleFunc("POST /oid4vci/v1/notification", h.notification)
+	mux.HandleFunc("GET /openapi.yaml", h.openAPISpecHandler)
+	mux.HandleFunc("GET /swagger", h.swaggerUI)
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {

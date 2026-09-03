@@ -37,6 +37,8 @@ make run          # http://localhost:8080
 - `POST /oid4vci/v1/credential` — credential issuance (SD-JWT VC or mdoc).
 - `POST /oid4vci/v1/notification` — no-op per OID4VCI §10.1 (this issuer doesn't yet track notification_id).
 - `GET /health` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).
+- `GET /openapi.yaml` — OpenAPI spec.
+- `GET /swagger` — Swagger UI for the JSON API.
 
 ## UI
 

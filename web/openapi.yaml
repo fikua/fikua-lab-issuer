@@ -1,0 +1,539 @@
+openapi: 3.0.3
+info:
+  title: Fikua Lab Issuer
+  description: >
+    HAIP-only OID4VCI credential issuer for the Fikua Lab EUDI Wallet
+    ecosystem. Authorization_code via Pushed Authorization Requests (RFC
+    9126), DPoP sender-constraining (RFC 9449), ATCA draft-07 client
+    attestation, and PKCE S256 are mandatory on every request — there is
+    no profile selection and no pre-authorized_code grant. Issues EUDI
+    PID (SD-JWT VC and mdoc); Student ID is not supported.
+  version: "0.1.0"
+  license:
+    name: Proprietary
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: >
+            Service is healthy, or degraded (the attestation-registry
+            catalogue refresh is stale but the last known-good catalogue
+            is still being served).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+  /.well-known/openid-credential-issuer:
+    get:
+      summary: OID4VCI Credential Issuer Metadata
+      operationId: credentialIssuerMetadata
+      responses:
+        "200":
+          description: Credential Issuer Metadata document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialIssuerMetadata"
+  /.well-known/oauth-authorization-server:
+    get:
+      summary: OAuth 2.0 Authorization Server Metadata (RFC 8414), HAIP profile
+      operationId: authServerMetadata
+      responses:
+        "200":
+          description: Authorization Server Metadata document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthServerMetadata"
+  /oid4vci/v1/jwks:
+    get:
+      summary: Issuer's public JWK Set
+      operationId: jwks
+      responses:
+        "200":
+          description: JWK Set containing the issuer's signing key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+  /oid4vci/v1/issuance:
+    get:
+      summary: List issuance records
+      operationId: listIssuanceRecords
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, status, credential_type]
+            default: created_at
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Paginated issuance records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListIssuanceRecordsResult"
+    post:
+      summary: Trigger an issuance
+      description: >
+        Creates an issuance record and returns an authorization_code
+        credential offer carrying an issuer_state that links the
+        wallet's subsequent PAR-backed /authorize back to this record.
+      operationId: triggerIssuance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerIssuanceRequest"
+      responses:
+        "200":
+          description: Issuance triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerIssuanceResult"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/par:
+    post:
+      summary: Pushed Authorization Request (RFC 9126)
+      description: >
+        Client attestation (ATCA draft-07, via the
+        OAuth-Client-Attestation / OAuth-Client-Attestation-PoP headers)
+        is mandatory. code_challenge_method, if present, must be S256.
+      operationId: par
+      parameters:
+        - $ref: "#/components/parameters/ClientAttestationHeader"
+        - $ref: "#/components/parameters/ClientAttestationPoPHeader"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
+                  enum: [S256]
+                issuer_state:
+                  type: string
+                state:
+                  type: string
+      responses:
+        "201":
+          description: Pushed authorization request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_uri:
+                    type: string
+                    example: "urn:ietf:params:oauth:request_uri:abc123"
+                  expires_in:
+                    type: integer
+                    example: 60
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/authorize:
+    get:
+      summary: Resolve a PAR request_uri into an authorization code
+      operationId: authorize
+      parameters:
+        - name: request_uri
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: >
+            Redirect to the client's redirect_uri with ?code=...&state=...&iss=...
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/token:
+    post:
+      summary: Token endpoint — authorization_code grant, DPoP-bound
+      description: >
+        Client attestation and a valid DPoP proof (bound to POST
+        {issuer}/oid4vci/v1/token) are mandatory. The authorization code
+        is consumed before PKCE is verified — a failed PKCE check still
+        burns the code.
+      operationId: token
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/ClientAttestationHeader"
+        - $ref: "#/components/parameters/ClientAttestationPoPHeader"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code]
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/nonce:
+    post:
+      summary: Nonce endpoint
+      description: >
+        Always registers a fresh c_nonce. If an access token is
+        presented, a valid DPoP proof (bound to POST
+        {issuer}/oid4vci/v1/nonce, with ath) is mandatory and its key
+        must match the one bound to the session at /token.
+      operationId: nonce
+      parameters:
+        - name: Authorization
+          in: header
+          schema:
+            type: string
+            example: "DPoP <access_token>"
+        - name: DPoP
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Fresh nonce
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  c_nonce:
+                    type: string
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/credential:
+    post:
+      summary: Credential endpoint — issues an SD-JWT VC or mdoc credential
+      description: >
+        Requires a DPoP-bound access token (Bearer is rejected outright)
+        and a matching DPoP proof (bound to POST
+        {issuer}/oid4vci/v1/credential, with ath).
+      operationId: credential
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+            example: "DPoP <access_token>"
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialRequest"
+      responses:
+        "200":
+          description: Credential issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialResponse"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/notification:
+    post:
+      summary: Notification endpoint (OID4VCI §10.1) — currently a no-op
+      description: >
+        This issuer never sets notification_id in a credential response
+        yet (immediate, single-credential issuance only), so there is
+        nothing to look up or track — any POST here is acknowledged with
+        204.
+      operationId: notification
+      responses:
+        "204":
+          description: Acknowledged
+
+components:
+  parameters:
+    ClientAttestationHeader:
+      name: OAuth-Client-Attestation
+      in: header
+      description: ATCA draft-07 Wallet Instance Attestation (WIA) JWT.
+      schema:
+        type: string
+    ClientAttestationPoPHeader:
+      name: OAuth-Client-Attestation-PoP
+      in: header
+      description: ATCA draft-07 WIA Proof-of-Possession JWT.
+      schema:
+        type: string
+  responses:
+    OAuthError:
+      description: OAuth2/OID4VCI error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OAuthError"
+  schemas:
+    OAuthError:
+      type: object
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_grant
+            - invalid_client
+            - unsupported_grant_type
+            - invalid_token
+            - unsupported_credential_type
+            - unsupported_credential_format
+            - invalid_proof
+            - invalid_nonce
+            - unknown_credential_configuration
+            - unknown_credential_identifier
+            - invalid_credential_request
+        error_description:
+          type: string
+    CredentialIssuerMetadata:
+      type: object
+      properties:
+        credential_issuer:
+          type: string
+        authorization_servers:
+          type: array
+          items:
+            type: string
+        credential_endpoint:
+          type: string
+        nonce_endpoint:
+          type: string
+        notification_endpoint:
+          type: string
+        credential_response_encryption:
+          type: object
+        batch_credential_issuance:
+          type: object
+        credential_configurations_supported:
+          type: object
+          additionalProperties: true
+        display:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              locale:
+                type: string
+    AuthServerMetadata:
+      type: object
+      properties:
+        issuer:
+          type: string
+        token_endpoint:
+          type: string
+        authorization_endpoint:
+          type: string
+        pushed_authorization_request_endpoint:
+          type: string
+        jwks_uri:
+          type: string
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        dpop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        client_attestation_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        client_attestation_pop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        require_pushed_authorization_requests:
+          type: boolean
+        token_endpoint_auth_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        authorization_response_iss_parameter_supported:
+          type: boolean
+        subject_types_supported:
+          type: array
+          items:
+            type: string
+    TriggerIssuanceRequest:
+      type: object
+      properties:
+        credential_type:
+          type: string
+          description: A credential_configuration_id, e.g. urn:eudi:pid:1 or urn:eudi:pid:1.mdoc. Defaults to urn:eudi:pid:1.
+        credential_data:
+          type: object
+          additionalProperties: true
+          example:
+            given_name: Max
+            family_name: Mustermann
+            birthdate: "1990-06-15"
+        source_type:
+          type: string
+        source_ref:
+          type: string
+    TriggerIssuanceResult:
+      type: object
+      properties:
+        issuance_id:
+          type: string
+        credential_offer:
+          type: object
+          description: An OID4VCI Credential Offer (authorization_code grant, issuer_state set).
+    ListIssuanceRecordsResult:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssuanceRecordView"
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+    IssuanceRecordView:
+      type: object
+      properties:
+        id:
+          type: string
+        credential_type:
+          type: string
+        status:
+          type: string
+        source_type:
+          type: string
+        source_ref:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        subject_name:
+          type: string
+        credential_data:
+          type: string
+          description: JSON-encoded credential data.
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [DPoP]
+        expires_in:
+          type: integer
+          example: 86400
+    CredentialRequest:
+      type: object
+      properties:
+        credential_configuration_id:
+          type: string
+          enum: ["urn:eudi:pid:1", "urn:eudi:pid:1.mdoc"]
+        proof:
+          type: object
+          properties:
+            proof_type:
+              type: string
+              enum: [jwt]
+            jwt:
+              type: string
+        proofs:
+          type: object
+          properties:
+            jwt:
+              type: array
+              items:
+                type: string
+    CredentialResponse:
+      type: object
+      properties:
+        credentials:
+          type: array
+          items:
+            type: object
+            properties:
+              credential:
+                type: string
+                description: A compact SD-JWT VC, or base64url-encoded CBOR IssuerSigned mdoc bytes.
