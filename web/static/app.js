@@ -27,19 +27,16 @@
         return div.innerHTML;
     }
 
-    // The issuer is served at lab.fikua.com/issuer/ so backend paths must
-    // be prefixed with /issuer/ to reach the role's Worker (which strips
-    // the prefix before forwarding to the backend).
-    const API_PREFIX = '/issuer';
-
+    // This UI is served by the same Go binary that serves the API, at the
+    // root of its own hostname (issuer.fikua.com) — no Worker, no path
+    // prefix, same pattern as fikua-lab-attestation-registry.
     async function api(method, path, body) {
         const opts = { method, headers: {} };
         if (body) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         }
-        const url = path.startsWith('/') ? API_PREFIX + path : path;
-        const res = await fetch(url, opts);
+        const res = await fetch(path, opts);
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error_description || err.error || `HTTP ${res.status}`);
@@ -62,38 +59,21 @@
 
     function formatConfigId(id) {
         if (!id) return '-';
-        if (id.includes('pid.mdoc')) return 'PID mdoc';
+        if (id.includes('mdoc')) return 'PID mdoc';
         if (id.includes('pid')) return 'PID sd-jwt';
-        if (id.includes('student-id')) return 'Student ID';
         return id;
     }
 
     // Backend-managed claims that the form should not show
     const HIDDEN_CLAIMS = new Set(['issuing_authority', 'issuing_country']);
 
-    // Default test data per credential type (keyed by config ID prefix)
+    // Default test data for PID, keyed by config ID prefix — this issuer
+    // only issues PID (sd-jwt + mdoc); Student ID is not supported.
     const DEFAULT_DATA = {
-        'eu.europa.ec.eudi.pid': {
+        'urn:eudi:pid': {
             given_name: 'Max',
             family_name: 'Mustermann',
             birth_date: '1990-06-15',
-        },
-        'student-id': {
-            identifier: 'STU-2025-001',
-            familyName: 'Mustermann',
-            firstName: 'Max',
-            displayName: 'Max Mustermann',
-            commonName: 'M. Mustermann',
-            dateOfBirth: '2000-03-20',
-            mail: 'max.mustermann@university.edu',
-            schacPersonalUniqueCode: 'urn:schac:personalUniqueCode:int:esi:university.edu:12345',
-            schacPersonalUniqueID: 'urn:schac:personalUniqueID:int:esi:university.edu:12345',
-            schacHomeOrganization: 'university.edu',
-            eduPersonPrincipalName: 'max@university.edu',
-            eduPersonPrimaryAffiliation: 'student',
-            eduPersonAffiliation: 'student;member',
-            eduPersonScopedAffiliation: 'student@university.edu',
-            eduPersonAssurance: 'https://refeds.org/assurance/IAP/medium',
         },
     };
 
@@ -208,35 +188,8 @@
             });
         }
 
-        // Show delivery method selector when credential has an email claim
-        const deliveryEl = document.getElementById('delivery-method');
-        const hasEmailClaim = claims.some(c => c.path?.[0] === 'mail');
-        deliveryEl.classList.toggle('hidden', !hasEmailClaim);
-        if (!hasEmailClaim) {
-            document.getElementById('delivery-screen').checked = true;
-        }
-
-        // Reset grant type and tx_code to defaults
-        document.getElementById('grant-pre-auth').checked = true;
-        document.getElementById('tx-code-off').checked = true;
-        updateTxCodeVisibility();
-
         showStep('form');
     }
-
-    // Grant type toggle: hide tx_code selector when authorization_code is selected
-    function updateTxCodeVisibility() {
-        const isPreAuth = document.getElementById('grant-pre-auth').checked;
-        const txCodeSelector = document.getElementById('tx-code-selector');
-        txCodeSelector.classList.toggle('hidden', !isPreAuth);
-        if (!isPreAuth) {
-            document.getElementById('tx-code-off').checked = true;
-        }
-    }
-
-    document.querySelectorAll('input[name="grant_type"]').forEach(radio => {
-        radio.addEventListener('change', updateTxCodeVisibility);
-    });
 
     // S4: Form steps
     const stepSelect = document.getElementById('step-select');
@@ -266,23 +219,15 @@
         try {
             const formData = new FormData(form);
             const credentialData = {};
-            const excludedKeys = new Set(['tx_code_required', 'delivery_method', 'grant_type']);
             for (const [key, value] of formData.entries()) {
-                if (!excludedKeys.has(key)) credentialData[key] = value;
+                credentialData[key] = value;
             }
-
-            const txCodeRequired = document.getElementById('tx-code-on').checked;
-            const deliveryMethod = document.querySelector('input[name="delivery_method"]:checked')?.value || 'screen';
-            const grantType = document.querySelector('input[name="grant_type"]:checked')?.value || 'pre-authorized_code';
 
             const result = await api('POST', '/oid4vci/v1/issuance', {
                 credential_type: selectedConfigId,
                 credential_data: credentialData,
                 source_type: 'admin_portal',
                 source_ref: 'Manual issuance from issuer UI',
-                tx_code_required: txCodeRequired,
-                delivery_method: deliveryMethod,
-                grant_type: grantType,
             });
 
             renderResult(result);
@@ -300,73 +245,28 @@
     function renderResult(data) {
         const content = document.getElementById('result-content');
         let html = '';
-        const emailDelivery = !!data.email_sent_to;
 
-        // Email delivery: show confirmation only, no QR/deep link/tx_code on screen
-        if (emailDelivery) {
-            html += `
-                <div class="result-draft">
-                    <div class="result-draft-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/>
-                        </svg>
-                    </div>
-                    <div class="result-draft-title">Invitation Sent</div>
-                    <div class="result-draft-desc">A credential invitation email has been sent to:</div>
-                    <div class="result-draft-email">${esc(data.email_sent_to)}</div>
-                    ${data.tx_code ? '<div class="result-draft-desc" style="margin-top:0.75rem;">A verification code will be sent when the wallet claims the credential.</div>' : ''}
-                </div>`;
-            content.innerHTML = html;
+        // This issuer always returns credential_offer inline (HAIP offers
+        // are never by-reference) — QR + JSON + wallet deep link.
+        const offer = data.credential_offer;
+        if (!offer) {
+            content.innerHTML = '';
             return;
         }
 
-        // Screen delivery: show QR + deep link + tx_code
-        const offerUri = data.credential_offer_uri;
-        const offer = data.credential_offer;
-        const txCode = data.tx_code;
-
-        if (txCode) {
-            html += `<div class="result-tx-code"><span class="result-tx-label">TX Code</span> ${esc(txCode)}</div>`;
-        }
-
-        let qrContent = '';
-        if (offerUri) {
-            // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
-            qrContent = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(offerUri)}`;
-            // Button: HTTPS wallet link for same-device browser flow
-            const walletLink = `${WALLET_URL}/?credential_offer_uri=${encodeURIComponent(offerUri)}`;
-            html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-            html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(qrContent)}</div>`;
-            html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
-        } else if (offer) {
-            const offerJson = JSON.stringify(offer, null, 2);
-            // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
-            qrContent = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
-            // Button: HTTPS wallet link for same-device browser flow
-            const walletLink = `${WALLET_URL}/?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
-            html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-            html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
-            html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
-        }
+        const offerJson = JSON.stringify(offer, null, 2);
+        // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
+        const qrContent = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+        // Button: HTTPS wallet link for same-device browser flow
+        const walletLink = `${WALLET_URL}/?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+        html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
+        html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
+        html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
 
         content.innerHTML = html;
 
-        // Generate QR code with the full deeplink URI
-        if (qrContent) {
-            const canvas = document.getElementById('qr-canvas');
-            if (canvas) generateQR(canvas, qrContent);
-
-            // Copy URI on click
-            const uriEl = document.getElementById('offer-uri');
-            if (uriEl) {
-                uriEl.addEventListener('click', () => {
-                    navigator.clipboard.writeText(offerUri).then(() => {
-                        uriEl.style.borderColor = 'var(--success)';
-                        setTimeout(() => uriEl.style.borderColor = '', 1500);
-                    });
-                });
-            }
-        }
+        const canvas = document.getElementById('qr-canvas');
+        if (canvas) generateQR(canvas, qrContent);
     }
 
     // S6: Records table
@@ -470,13 +370,10 @@
         html += dialogRow('Type', record.credential_type);
         html += dialogRowHtml('Status', `<span class="badge badge-${esc(record.status)}">${esc(record.status)}</span>`);
         html += dialogRow('Subject', record.subject_name || '-');
-        if (record.recipient_email) html += dialogRow('Recipient Email', record.recipient_email);
         html += dialogRow('Source Type', record.source_type || '-');
         html += dialogRow('Source Ref', record.source_ref || '-');
         html += dialogRow('Created', formatDate(record.created_at));
         html += dialogRow('Updated', formatDate(record.updated_at));
-        if (record.pre_auth_code) html += dialogRow('Pre-Auth Code', record.pre_auth_code);
-        if (record.offer_id) html += dialogRow('Offer ID', record.offer_id);
 
         // Credential data
         if (record.credential_data) {

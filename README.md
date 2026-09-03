@@ -9,9 +9,14 @@ from which it fetches credential-scheme definitions (claims, display
 metadata, format info) over HTTP instead of hardcoding them.
 
 This is a rewrite of `fikua-lab`'s Java/Javalin `fikua-issuer` module
-(`suite/backend/fikua-issuer`) — see the migration plan for phasing.
-Currently issues EUDI PID (SD-JWT VC + mdoc); Student ID is not carried
-over from the Java service.
+(`suite/backend/fikua-issuer`). Currently issues EUDI PID (SD-JWT VC +
+mdoc); Student ID is not carried over from the Java service.
+
+**HAIP-only**: this issuer implements a single protocol profile —
+authorization_code via Pushed Authorization Requests (RFC 9126), DPoP
+sender-constraining (RFC 9449), ATCA draft-07 client attestation, and
+PKCE S256 are all mandatory on every request. There is no profile
+selection and no pre-authorized_code/plain flow.
 
 ## Run
 
@@ -21,8 +26,17 @@ make run          # http://localhost:8080
 
 ## API
 
-Phase 1: only `/healthz`. OID4VCI endpoints (`/.well-known/*`,
-`/oid4vci/v1/*`) land in later phases — see the migration plan.
+- `GET /.well-known/openid-credential-issuer` / `GET /.well-known/oauth-authorization-server` — OID4VCI / RFC 8414 metadata.
+- `GET /oid4vci/v1/jwks` — issuer's public JWK Set.
+- `POST /oid4vci/v1/issuance` — trigger an issuance, returns an authorization_code credential offer.
+- `GET /oid4vci/v1/issuance` — paginated, sortable issuance record listing.
+- `POST /oid4vci/v1/par` — Pushed Authorization Request.
+- `GET /oid4vci/v1/authorize` — resolves a PAR request_uri into an authorization code (redirect).
+- `POST /oid4vci/v1/token` — authorization_code grant, DPoP-bound.
+- `POST /oid4vci/v1/nonce` — c_nonce issuance, DPoP-validated once a session exists.
+- `POST /oid4vci/v1/credential` — credential issuance (SD-JWT VC or mdoc).
+- `POST /oid4vci/v1/notification` — no-op per OID4VCI §10.1 (this issuer doesn't yet track notification_id).
+- `GET /healthz` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).
 
 ## UI
 

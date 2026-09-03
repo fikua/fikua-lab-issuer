@@ -1,8 +1,7 @@
 // Package session holds ephemeral OID4VCI/OAuth2 protocol state: PAR
-// requests, authorization codes, access tokens, nonces, and stored
-// credential offers. In-memory only, matching the Java issuer's
-// InMemorySessionStore — no TTL/expiry, relies on single-use consumption
-// for codes/nonces.
+// requests, authorization codes, access tokens, and nonces. In-memory
+// only, matching the Java issuer's InMemorySessionStore — no TTL/expiry,
+// relies on single-use consumption for codes/nonces.
 package session
 
 import (
@@ -26,22 +25,20 @@ type Data struct {
 
 // Store is the in-memory session store.
 type Store struct {
-	mu               sync.Mutex
-	parRequests      map[string]map[string]string
-	authCodes        map[string]Data
-	accessTokens     map[string]Data
-	nonces           map[string]struct{}
-	credentialOffers map[string]string
+	mu           sync.Mutex
+	parRequests  map[string]map[string]string
+	authCodes    map[string]Data
+	accessTokens map[string]Data
+	nonces       map[string]struct{}
 }
 
 // NewStore builds an empty Store.
 func NewStore() *Store {
 	return &Store{
-		parRequests:      make(map[string]map[string]string),
-		authCodes:        make(map[string]Data),
-		accessTokens:     make(map[string]Data),
-		nonces:           make(map[string]struct{}),
-		credentialOffers: make(map[string]string),
+		parRequests:  make(map[string]map[string]string),
+		authCodes:    make(map[string]Data),
+		accessTokens: make(map[string]Data),
+		nonces:       make(map[string]struct{}),
 	}
 }
 
@@ -155,22 +152,4 @@ func (s *Store) InvalidateNonce(nonce string) {
 	s.mu.Lock()
 	delete(s.nonces, nonce)
 	s.mu.Unlock()
-}
-
-// StoreCredentialOffer stores offerJSON under a fresh offer id, for
-// by-reference credential offers.
-func (s *Store) StoreCredentialOffer(offerJSON string) string {
-	id := RandomToken(16)
-	s.mu.Lock()
-	s.credentialOffers[id] = offerJSON
-	s.mu.Unlock()
-	return id
-}
-
-// GetCredentialOffer is a non-destructive lookup of a stored offer's JSON.
-func (s *Store) GetCredentialOffer(id string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	offerJSON, ok := s.credentialOffers[id]
-	return offerJSON, ok
 }

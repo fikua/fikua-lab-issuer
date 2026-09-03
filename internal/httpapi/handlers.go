@@ -1,6 +1,8 @@
-// Package httpapi exposes the issuer's JSON API. Phase 2 adds the
-// Credential Issuer Metadata endpoint, sourced from
-// fikua-lab-attestation-registry; OID4VCI issuance flows land in phase 3.
+// Package httpapi exposes the issuer's JSON API: OID4VCI/OAuth2 well-known
+// metadata, the HAIP authorization_code flow (PAR, authorize, token,
+// nonce, credential), and issuance triggering/listing. Credential
+// configurations are sourced from fikua-lab-attestation-registry via
+// internal/credentialconfig.
 package httpapi
 
 import (
@@ -46,6 +48,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
+	mux.HandleFunc("POST /oid4vci/v1/notification", h.notification)
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +76,15 @@ func (h *Handler) credentialIssuerMetadata(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) authServerMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, oid4vci.BuildHAIPAuthServerMetadata(h.baseURL))
+}
+
+// notification implements the OID4VCI 1.0 Final §10.1 Notification
+// Endpoint as a no-op: this issuer's credential responses never set
+// notification_id (immediate, single-credential issuance only), so there
+// is nothing to look up or track yet — a wallet is simply acknowledged so
+// it doesn't error out following the metadata this issuer advertises.
+func (h *Handler) notification(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

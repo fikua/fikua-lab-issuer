@@ -148,13 +148,6 @@ func (s *Store) FindAll(offset, limit int, sortField, sortOrder string) ([]Recor
 	return all[offset:end], total
 }
 
-// Count returns the total number of records.
-func (s *Store) Count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.records)
-}
-
 func sortLess(a, b Record, field string) bool {
 	switch field {
 	case "updated_at":

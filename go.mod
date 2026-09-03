@@ -2,11 +2,13 @@ module github.com/fikua/fikua-lab-issuer
 
 go 1.26.5
 
-require github.com/lestrrat-go/jwx/v3 v3.2.0
+require (
+	github.com/fxamacker/cbor/v2 v2.9.3
+	github.com/lestrrat-go/jwx/v3 v3.2.0
+)
 
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/dsig v1.3.0 // indirect

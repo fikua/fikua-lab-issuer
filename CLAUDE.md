@@ -26,36 +26,43 @@ services independently deployable.
 Student ID credential (EWC ds010); this rewrite drops it — PID
 (SD-JWT VC + mdoc) only.
 
-## Migration plan / phasing
+**HAIP-only, no profile system.** The Java service supports multiple
+protocol profiles (a "plain" pre-authorized_code flow and a HAIP
+authorization_code flow, selected via a Postgres-backed `ProfileConfig`).
+This rewrite implements HAIP only: authorization_code via PAR, DPoP,
+ATCA client attestation, and PKCE S256 are always mandatory. There is no
+profile selection, no pre-authorized_code grant, and no
+`internal/profile` package — this was a deliberate simplification, not an
+oversight.
 
-See the plan this rewrite follows (phases 1-4: skeleton+pipeline →
-registry-client integration → full OID4VCI flow parity → cutover) —
-ask the user for the current plan file if picking this up mid-migration,
-or check recent commits/PRs for which phase is in progress.
+## Status
 
-## Architecture (target shape, fills in across phases)
+Full OID4VCI/HAIP flow parity is implemented and verified end-to-end
+against a simulated wallet (PAR → authorize → token → nonce → credential,
+for both PID sd-jwt and mdoc). What remains before a production cutover:
+Postgres-backed persistence for issuance records (currently an in-memory
+stand-in, see `internal/issuance/store.go`) and pointing the real
+`issuer.fikua.com` hostname/DNS at this service instead of the Java
+issuer.
+
+## Architecture
 
 ```text
-cmd/issuer/              entrypoint: wiring only, no logic
-internal/config/         env var loading
-internal/registryclient/ HTTP client for fikua-lab-attestation-registry + cache/refresh
+cmd/issuer/                entrypoint: wiring only, no logic
+internal/config/           env var loading
+internal/registryclient/   HTTP client for fikua-lab-attestation-registry + cache/refresh
 internal/credentialconfig/ AttestationScheme -> OID4VCI credential_configurations_supported
-internal/oid4vci/        metadata, offer, request/response, proof validator
-internal/oauth2/         DPoP, client attestation (ATCA), PKCE, error model
-internal/crypto/         signing key (EC P-256/ES256), JWK, PEM loader
-internal/sdjwt/          SD-JWT builder
-internal/mdoc/           mdoc builder (ISO 18013-5, CBOR)
-internal/profile/        ProfileConfig (issuer-relevant fields) + Postgres store
-internal/issuance/       OID4VCI flows (pre-auth, authz-code/HAIP, PAR, DPoP, wallet-initiated)
-internal/session/        in-memory session store (tokens, nonces, PAR requests, ...)
-internal/email/          EmailService (Resend + NoOp)
-internal/httpapi/        JSON API — /oid4vci/v1/*, well-known endpoints
-internal/webui/          serves the embedded static UI
-web/static/              UI assets (HTML/CSS/JS), embedded into the binary
+internal/oid4vci/          metadata, offer, request/response, proof validator
+internal/oauth2/           DPoP, client attestation (ATCA), PKCE, error model
+internal/crypto/           signing key (EC P-256/ES256), JWK, PEM loader, wallet-provider trust anchor
+internal/sdjwt/            SD-JWT builder
+internal/mdoc/             mdoc builder (ISO 18013-5, CBOR)
+internal/issuance/         HAIP OID4VCI flow: PAR, authorize, authorization_code token, nonce, credential, issuance listing
+internal/session/          in-memory session store (PAR requests, auth codes, access tokens, nonces)
+internal/httpapi/          JSON API — /oid4vci/v1/*, well-known endpoints
+internal/webui/            serves the embedded static UI
+web/static/                UI assets (HTML/CSS/JS), embedded into the binary
 ```
-
-Currently only `internal/httpapi` (health check) and `internal/webui`
-exist — everything else lands in later phases.
 
 ## Conventions
 

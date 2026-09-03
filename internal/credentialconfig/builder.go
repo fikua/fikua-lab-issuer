@@ -62,9 +62,9 @@ type ClaimDisplay struct {
 // renders flat text/date inputs today. Nested claims (address.formatted)
 // and composite-typed ones despite a flat path (place_of_birth, an
 // object; nationalities, an array) are present in the scheme but omitted
-// from the form; the credential itself is still built with its full claim
-// set once the issuance flow is ported (phase 3), this only affects what
-// the form asks for.
+// from the form; the credential itself is built with its full claim set
+// regardless (see internal/issuance) — this only affects what the form
+// asks for.
 func Build(def registryclient.Definition) map[string]Config {
 	out := make(map[string]Config)
 	for _, format := range def.Scheme.SupportedFormats {

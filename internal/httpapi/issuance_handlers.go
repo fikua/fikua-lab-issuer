@@ -68,8 +68,7 @@ func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid form body: "+err.Error()))
 		return
 	}
-	wiaHeader := r.Header.Get(oauth2.HeaderClientAttestation)
-	popHeader := r.Header.Get(oauth2.HeaderClientAttestationPoP)
+	wiaHeader, popHeader := clientAttestationHeaders(r)
 
 	requestURI, expiresIn, err := h.issuance.HandlePar(form, wiaHeader, popHeader)
 	if err != nil {
@@ -107,8 +106,7 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dpopHeader := r.Header.Get("DPoP")
-	wiaHeader := r.Header.Get(oauth2.HeaderClientAttestation)
-	popHeader := r.Header.Get(oauth2.HeaderClientAttestationPoP)
+	wiaHeader, popHeader := clientAttestationHeaders(r)
 
 	resp, err := h.issuance.HandleAuthCodeToken(req, dpopHeader, wiaHeader, popHeader)
 	if err != nil {
@@ -174,6 +172,13 @@ func parseForm(r *http.Request) (map[string]string, error) {
 		}
 	}
 	return form, nil
+}
+
+// clientAttestationHeaders extracts the ATCA draft-07 WIA/PoP headers,
+// shared by /par and /token — the only two endpoints that accept
+// header-based client attestation.
+func clientAttestationHeaders(r *http.Request) (wia, pop string) {
+	return r.Header.Get(oauth2.HeaderClientAttestation), r.Header.Get(oauth2.HeaderClientAttestationPoP)
 }
 
 // extractAccessToken strips a case-insensitive "Bearer " or "DPoP " prefix
