@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
+	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
+	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oid4vci"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
 )
@@ -17,21 +19,29 @@ type Handler struct {
 	baseURL         string
 	cache           *registryclient.Cache
 	issuableSchemes []string
+	issuerKey       *fikuacrypto.SigningKey
+	issuance        *issuance.Service
 }
 
 // NewHandler builds an httpapi Handler. cache is the attestation-registry
 // scheme cache this issuer builds its credential configurations from;
 // issuableSchemes is the explicit allowlist of scheme ids to build
 // configurations for (the registry may define schemes this issuer isn't
-// meant to issue).
-func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []string) *Handler {
-	return &Handler{baseURL: baseURL, cache: cache, issuableSchemes: issuableSchemes}
+// meant to issue); issuerKey signs credentials and serves the JWK Set;
+// issuanceService implements the OID4VCI flows.
+func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []string, issuerKey *fikuacrypto.SigningKey, issuanceService *issuance.Service) *Handler {
+	return &Handler{baseURL: baseURL, cache: cache, issuableSchemes: issuableSchemes, issuerKey: issuerKey, issuance: issuanceService}
 }
 
 // Routes registers this handler's endpoints on mux.
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", h.credentialIssuerMetadata)
+	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)
+	mux.HandleFunc("POST /oid4vci/v1/issuance", h.triggerIssuance)
+	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
+	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
+	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {

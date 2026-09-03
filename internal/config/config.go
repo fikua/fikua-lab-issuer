@@ -22,6 +22,10 @@ type Config struct {
 	// services' credentials) — this list is what this issuer has actually
 	// decided to issue, not "whatever the registry happens to publish".
 	IssuableSchemes []string
+	// CertsDir holds issuer-cert.pem + issuer-key.pem for the signing key.
+	// If either is missing, an ephemeral CA-signed key is generated at
+	// startup instead (see internal/crypto.LoadOrGenerate).
+	CertsDir string
 }
 
 // Load reads configuration from environment variables, applying defaults
@@ -34,6 +38,7 @@ func Load() Config {
 		AttestationRegistryURL:  getenv("FIKUA_ATTESTATION_REGISTRY_URL", "https://attestation-registry.fikua.com"),
 		RegistryRefreshInterval: 5 * time.Minute,
 		IssuableSchemes:         splitCSV(getenv("FIKUA_ISSUABLE_SCHEMES", "urn:eudi:pid:1,urn:fikua:padro:barcelona:1")),
+		CertsDir:                getenv("FIKUA_CERTS_DIR", "./certs"),
 	}
 }
 

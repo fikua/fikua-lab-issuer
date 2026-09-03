@@ -9,8 +9,11 @@ import (
 	"net/http"
 
 	"github.com/fikua/fikua-lab-issuer/internal/config"
+	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
 	"github.com/fikua/fikua-lab-issuer/internal/httpapi"
+	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
+	"github.com/fikua/fikua-lab-issuer/internal/session"
 	"github.com/fikua/fikua-lab-issuer/internal/webui"
 	"github.com/fikua/fikua-lab-issuer/web"
 )
@@ -37,13 +40,23 @@ func main() {
 		}
 	}
 
+	issuerKey, err := fikuacrypto.LoadOrGenerate(cfg.CertsDir)
+	if err != nil {
+		log.Fatalf("loading signing key: %v", err)
+	}
+	log.Printf("issuer signing key loaded (kid=%s)", issuerKey.KID())
+
+	sessions := session.NewStore()
+	issuances := issuance.NewStore()
+	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances)
+
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {
 		log.Fatalf("static assets: %v", err)
 	}
 
 	mux := http.NewServeMux()
-	httpapi.NewHandler(cfg.BaseURL, cache, cfg.IssuableSchemes).Routes(mux)
+	httpapi.NewHandler(cfg.BaseURL, cache, cfg.IssuableSchemes, issuerKey, issuanceService).Routes(mux)
 	webui.NewHandler(staticFS, cfg.BasePath).Routes(mux)
 
 	log.Printf("fikua-lab-issuer listening on %s (issuing %d/%d configured schemes; %d total in catalogue from %s)", cfg.Addr, foundSchemes, len(cfg.IssuableSchemes), len(cache.All()), cfg.AttestationRegistryURL)
