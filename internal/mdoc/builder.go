@@ -87,7 +87,7 @@ func (b *Builder) Build() ([]byte, error) {
 		return nil, err
 	}
 
-	issuerAuth, err := signCoseSign1(msoPayload, b.issuerKey.Private(), b.x5cChain)
+	issuerAuth, err := signCoseSign1(msoPayload, b.issuerKey.Signer(), b.x5cChain)
 	if err != nil {
 		return nil, err
 	}

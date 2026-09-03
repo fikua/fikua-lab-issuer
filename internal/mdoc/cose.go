@@ -8,9 +8,11 @@
 package mdoc
 
 import (
-	"crypto/ecdsa"
+	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/asn1"
+	"fmt"
 	"math/big"
 
 	"github.com/fxamacker/cbor/v2"
@@ -37,7 +39,7 @@ type coseSign1 struct {
 // carrying x5cChain under label 33 (x5chain) — a single bstr for one
 // certificate, an array of bstr for more than one, matching real-world
 // COSE x5chain convention.
-func signCoseSign1(payload []byte, private *ecdsa.PrivateKey, x5cChain [][]byte) ([]byte, error) {
+func signCoseSign1(payload []byte, signer crypto.Signer, x5cChain [][]byte) ([]byte, error) {
 	protectedMap := map[int]any{coseHeaderAlg: coseAlgES256}
 	protectedBytes, err := cbor.Marshal(protectedMap)
 	if err != nil {
@@ -63,7 +65,7 @@ func signCoseSign1(payload []byte, private *ecdsa.PrivateKey, x5cChain [][]byte)
 		return nil, err
 	}
 
-	signature, err := signRawP1363(private, toBeSigned)
+	signature, err := signRawP1363(signer, toBeSigned)
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +78,19 @@ func signCoseSign1(payload []byte, private *ecdsa.PrivateKey, x5cChain [][]byte)
 	})
 }
 
-// signRawP1363 signs digest(data) with private, returning the fixed
-// 64-byte raw r||s signature COSE requires (not DER/ASN.1) — the
-// equivalent of the Java issuer's "SHA256withECDSAinP1363Format".
-func signRawP1363(private *ecdsa.PrivateKey, data []byte) ([]byte, error) {
+// signRawP1363 signs sha256(data) with signer, returning the fixed 64-byte
+// raw r||s signature COSE requires (not DER/ASN.1) — the equivalent of the
+// Java issuer's "SHA256withECDSAinP1363Format". crypto.Signer.Sign returns
+// an ASN.1 DER-encoded ECDSA signature (standard Go convention, followed by
+// both *ecdsa.PrivateKey and remote signers such as cscclient.Signer), so
+// it's decoded and re-packed as fixed-width r||s here.
+func signRawP1363(signer crypto.Signer, data []byte) ([]byte, error) {
 	hash := sha256.Sum256(data)
-	r, s, err := ecdsaSign(private, hash[:])
+	der, err := signer.Sign(rand.Reader, hash[:], crypto.SHA256)
+	if err != nil {
+		return nil, err
+	}
+	r, s, err := parseECDSADER(der)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +100,12 @@ func signRawP1363(private *ecdsa.PrivateKey, data []byte) ([]byte, error) {
 	return out, nil
 }
 
-func ecdsaSign(private *ecdsa.PrivateKey, hash []byte) (r, s *big.Int, err error) {
-	return ecdsa.Sign(rand.Reader, private, hash)
+// parseECDSADER decodes an ASN.1 DER-encoded ECDSA signature (SEQUENCE { r
+// INTEGER, s INTEGER }) into its r and s components.
+func parseECDSADER(der []byte) (r, s *big.Int, err error) {
+	var sig struct{ R, S *big.Int }
+	if _, err := asn1.Unmarshal(der, &sig); err != nil {
+		return nil, nil, fmt.Errorf("parsing ECDSA signature: %w", err)
+	}
+	return sig.R, sig.S, nil
 }

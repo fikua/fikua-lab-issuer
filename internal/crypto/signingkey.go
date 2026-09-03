@@ -6,7 +6,6 @@ package crypto
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/json"
 
@@ -18,13 +17,15 @@ func base64URLNoPadding(b []byte) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// SigningKey is the issuer's signing key, wrapping an EC P-256 key pair and
-// its public JWK Set (with an optional x5c certificate chain).
+// SigningKey is the issuer's signing key: either a local EC P-256 private
+// key, or a crypto.Signer delegating to a remote signing service (e.g. the
+// Fikua DSS over CSC — see NewRemote). Either way it carries the matching
+// public JWK Set (with an optional x5c certificate chain).
 type SigningKey struct {
 	kid      string
-	private  *ecdsa.PrivateKey
-	public   jwk.Key  // public JWK, with kid/x5c/alg/use set
-	x5cChain [][]byte // leaf-first DER chain, root CA excluded; nil if unset
+	signer   crypto.Signer // *ecdsa.PrivateKey for local keys, or a remote crypto.Signer
+	public   jwk.Key       // public JWK, with kid/x5c/alg/use set
+	x5cChain [][]byte      // leaf-first DER chain, root CA excluded; nil if unset
 }
 
 // Algorithm is the JWS algorithm this issuer signs with — ES256 throughout,
@@ -37,9 +38,12 @@ func (k *SigningKey) KID() string {
 	return k.kid
 }
 
-// Private returns the raw ECDSA private key, for signing.
-func (k *SigningKey) Private() *ecdsa.PrivateKey {
-	return k.private
+// Signer returns the crypto.Signer backing this key — either a local
+// *ecdsa.PrivateKey or a remote signer (e.g. cscclient.Signer). jwx's
+// jwt.WithKey/jws.Sign accept any crypto.Signer, so callers no longer need
+// to know which.
+func (k *SigningKey) Signer() crypto.Signer {
+	return k.signer
 }
 
 // PublicJWK returns the key's public JWK (kid/x5c/alg/use already set).
@@ -63,12 +67,23 @@ func (k *SigningKey) JWKSetJSON() ([]byte, error) {
 	return json.Marshal(set)
 }
 
-// buildPublicJWK derives the public JWK for private (kid = RFC 7638 SHA-256
+// NewRemote builds a SigningKey backed by signer (e.g. a cscclient.Signer
+// delegating to the Fikua DSS), with certChainDER as its x5c chain
+// (leaf-first, root CA excluded).
+func NewRemote(signer crypto.Signer, certChainDER [][]byte) (*SigningKey, error) {
+	pub, kid, chain, err := buildPublicJWK(signer, certChainDER)
+	if err != nil {
+		return nil, err
+	}
+	return &SigningKey{kid: kid, signer: signer, public: pub, x5cChain: chain}, nil
+}
+
+// buildPublicJWK derives the public JWK for signer (kid = RFC 7638 SHA-256
 // thumbprint, alg = ES256, use = sig), attaching x5c if certChainDER is
 // non-empty (leaf-first, root CA excluded, per HAIP §6.1.1 — callers must
 // not include the CA certificate).
-func buildPublicJWK(private *ecdsa.PrivateKey, certChainDER [][]byte) (jwk.Key, string, [][]byte, error) {
-	pub, err := jwk.Import(private.Public())
+func buildPublicJWK(signer crypto.Signer, certChainDER [][]byte) (jwk.Key, string, [][]byte, error) {
+	pub, err := jwk.Import(signer.Public())
 	if err != nil {
 		return nil, "", nil, err
 	}

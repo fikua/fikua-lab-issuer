@@ -128,7 +128,7 @@ func (b *Builder) Build() (string, error) {
 		}
 	}
 
-	signed, err := jwt.Sign(token, jwt.WithKey(fikuacrypto.Algorithm, b.issuerKey.Private(), jws.WithProtectedHeaders(headers)))
+	signed, err := jwt.Sign(token, jwt.WithKey(fikuacrypto.Algorithm, b.issuerKey.Signer(), jws.WithProtectedHeaders(headers)))
 	if err != nil {
 		return "", fmt.Errorf("sdjwt: signing: %w", err)
 	}

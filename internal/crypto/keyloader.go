@@ -74,7 +74,7 @@ func loadFromPEM(certPath, keyPath string) (*SigningKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SigningKey{kid: kid, private: ecPrivate, public: pub, x5cChain: x5cChain}, nil
+	return &SigningKey{kid: kid, signer: ecPrivate, public: pub, x5cChain: x5cChain}, nil
 }
 
 func generateEphemeral() (*SigningKey, error) {
@@ -130,5 +130,5 @@ func generateEphemeral() (*SigningKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SigningKey{kid: kid, private: issuerKey, public: pub, x5cChain: x5cChain}, nil
+	return &SigningKey{kid: kid, signer: issuerKey, public: pub, x5cChain: x5cChain}, nil
 }
