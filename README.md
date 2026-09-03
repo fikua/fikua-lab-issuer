@@ -28,7 +28,8 @@ make run          # http://localhost:8080
 
 - `GET /.well-known/openid-credential-issuer` / `GET /.well-known/oauth-authorization-server` — OID4VCI / RFC 8414 metadata.
 - `GET /oid4vci/v1/jwks` — issuer's public JWK Set.
-- `POST /oid4vci/v1/issuance` — trigger an issuance, returns an authorization_code credential offer.
+- `POST /oid4vci/v1/issuance` — trigger an issuance, returns a `credential_offer_uri` (by-reference authorization_code credential offer).
+- `GET /oid4vci/v1/credential-offer/{id}` — resolves a `credential_offer_uri` to its Credential Offer JSON.
 - `GET /oid4vci/v1/issuance` — paginated, sortable issuance record listing.
 - `POST /oid4vci/v1/par` — Pushed Authorization Request.
 - `GET /oid4vci/v1/authorize` — resolves a PAR request_uri into an authorization code (redirect).

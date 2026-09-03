@@ -75,13 +75,18 @@ type TriggerIssuanceRequest struct {
 
 // TriggerIssuanceResult is the POST /oid4vci/v1/issuance response body.
 type TriggerIssuanceResult struct {
-	IssuanceID      string `json:"issuance_id"`
-	CredentialOffer any    `json:"credential_offer"`
+	IssuanceID         string `json:"issuance_id"`
+	CredentialOfferURI string `json:"credential_offer_uri"`
 }
 
 // TriggerIssuance creates an issuance record and an authorization_code
 // credential offer carrying an issuer_state that links the wallet's
-// later /authorize (via PAR) back to this record.
+// later /authorize (via PAR) back to this record. The offer is served
+// by reference (credential_offer_uri, resolved via GET
+// /oid4vci/v1/credential-offer/{id}) rather than inlined in this
+// response — OID4VCI §4.1's two delivery styles are equivalent, but the
+// deep link a wallet actually scans/opens embeds this URI, not the
+// offer object itself.
 func (s *Service) TriggerIssuance(req TriggerIssuanceRequest) (TriggerIssuanceResult, error) {
 	credentialType := req.CredentialType
 	if credentialType == "" {
@@ -102,9 +107,21 @@ func (s *Service) TriggerIssuance(req TriggerIssuanceRequest) (TriggerIssuanceRe
 	s.issuances.UpdateIssuerState(rec.ID, issuerState)
 
 	offer := oid4vci.AuthorizationCodeOffer(s.baseURL, credentialType, issuerState)
+	offerJSON, err := json.Marshal(offer)
+	if err != nil {
+		return TriggerIssuanceResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to trigger issuance: "+err.Error())
+	}
+	offerID := s.sessions.StoreCredentialOffer(string(offerJSON))
 	s.issuances.UpdateStatus(rec.ID, "offer_created")
 
-	return TriggerIssuanceResult{IssuanceID: rec.ID, CredentialOffer: offer}, nil
+	offerURI := s.baseURL + "/oid4vci/v1/credential-offer/" + offerID
+	return TriggerIssuanceResult{IssuanceID: rec.ID, CredentialOfferURI: offerURI}, nil
+}
+
+// GetCredentialOffer resolves a by-reference credential offer id
+// (from a credential_offer_uri) to its stored Credential Offer JSON.
+func (s *Service) GetCredentialOffer(id string) (string, bool) {
+	return s.sessions.GetCredentialOffer(id)
 }
 
 // HandlePar implements the Pushed Authorization Request endpoint (RFC

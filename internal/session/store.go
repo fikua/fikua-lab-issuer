@@ -25,20 +25,22 @@ type Data struct {
 
 // Store is the in-memory session store.
 type Store struct {
-	mu           sync.Mutex
-	parRequests  map[string]map[string]string
-	authCodes    map[string]Data
-	accessTokens map[string]Data
-	nonces       map[string]struct{}
+	mu               sync.Mutex
+	parRequests      map[string]map[string]string
+	authCodes        map[string]Data
+	accessTokens     map[string]Data
+	nonces           map[string]struct{}
+	credentialOffers map[string]string
 }
 
 // NewStore builds an empty Store.
 func NewStore() *Store {
 	return &Store{
-		parRequests:  make(map[string]map[string]string),
-		authCodes:    make(map[string]Data),
-		accessTokens: make(map[string]Data),
-		nonces:       make(map[string]struct{}),
+		parRequests:      make(map[string]map[string]string),
+		authCodes:        make(map[string]Data),
+		accessTokens:     make(map[string]Data),
+		nonces:           make(map[string]struct{}),
+		credentialOffers: make(map[string]string),
 	}
 }
 
@@ -152,4 +154,24 @@ func (s *Store) InvalidateNonce(nonce string) {
 	s.mu.Lock()
 	delete(s.nonces, nonce)
 	s.mu.Unlock()
+}
+
+// StoreCredentialOffer stores offerJSON under a fresh offer id, for
+// by-reference credential offers (credential_offer_uri).
+func (s *Store) StoreCredentialOffer(offerJSON string) string {
+	id := RandomToken(16)
+	s.mu.Lock()
+	s.credentialOffers[id] = offerJSON
+	s.mu.Unlock()
+	return id
+}
+
+// GetCredentialOffer is a non-destructive lookup of a stored offer's JSON
+// — non-destructive because a wallet may legitimately retry the GET
+// (e.g. after a network hiccup) before ever using the offer.
+func (s *Store) GetCredentialOffer(id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	offerJSON, ok := s.credentialOffers[id]
+	return offerJSON, ok
 }

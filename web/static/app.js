@@ -246,27 +246,36 @@
         const content = document.getElementById('result-content');
         let html = '';
 
-        // This issuer always returns credential_offer inline (HAIP offers
-        // are never by-reference) — QR + JSON + wallet deep link.
-        const offer = data.credential_offer;
-        if (!offer) {
+        // This issuer always returns the offer by reference — QR + link +
+        // wallet deep link, all built from credential_offer_uri.
+        const offerUri = data.credential_offer_uri;
+        if (!offerUri) {
             content.innerHTML = '';
             return;
         }
 
-        const offerJson = JSON.stringify(offer, null, 2);
         // QR: spec-compliant openid-credential-offer:// deeplink (OID4VCI §4.1)
-        const qrContent = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+        const qrContent = `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(offerUri)}`;
         // Button: HTTPS wallet link for same-device browser flow
-        const walletLink = `${WALLET_URL}/?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`;
+        const walletLink = `${WALLET_URL}/?credential_offer_uri=${encodeURIComponent(offerUri)}`;
         html += `<div class="result-qr"><canvas id="qr-canvas"></canvas></div>`;
-        html += `<pre class="result-uri" style="text-align:left;white-space:pre-wrap">${esc(offerJson)}</pre>`;
+        html += `<div class="result-uri" title="Click to copy" id="offer-uri">${esc(offerUri)}</div>`;
         html += `<div class="result-deeplink"><a href="${esc(walletLink)}" class="btn btn-accent" target="_blank">Open in Wallet</a></div>`;
 
         content.innerHTML = html;
 
         const canvas = document.getElementById('qr-canvas');
         if (canvas) generateQR(canvas, qrContent);
+
+        const uriEl = document.getElementById('offer-uri');
+        if (uriEl) {
+            uriEl.addEventListener('click', () => {
+                navigator.clipboard.writeText(offerUri).then(() => {
+                    uriEl.style.borderColor = 'var(--success)';
+                    setTimeout(() => uriEl.style.borderColor = '', 1500);
+                });
+            });
+        }
     }
 
     // S6: Records table

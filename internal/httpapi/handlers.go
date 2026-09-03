@@ -45,6 +45,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)
 	mux.HandleFunc("GET /oid4vci/v1/issuance", h.listIssuanceRecords)
 	mux.HandleFunc("POST /oid4vci/v1/issuance", h.triggerIssuance)
+	mux.HandleFunc("GET /oid4vci/v1/credential-offer/{id}", h.credentialOffer)
 	mux.HandleFunc("POST /oid4vci/v1/par", h.par)
 	mux.HandleFunc("GET /oid4vci/v1/authorize", h.authorize)
 	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
@@ -80,6 +81,18 @@ func (h *Handler) credentialIssuerMetadata(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) authServerMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, oid4vci.BuildHAIPAuthServerMetadata(h.baseURL))
+}
+
+// credentialOffer resolves a by-reference credential_offer_uri (from
+// TriggerIssuance) to the Credential Offer JSON it points at.
+func (h *Handler) credentialOffer(w http.ResponseWriter, r *http.Request) {
+	offerJSON, ok := h.issuance.GetCredentialOffer(r.PathValue("id"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(offerJSON))
 }
 
 // notification implements the OID4VCI 1.0 Final §10.1 Notification

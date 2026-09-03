@@ -124,6 +124,26 @@ paths:
                 $ref: "#/components/schemas/TriggerIssuanceResult"
         "400":
           $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/credential-offer/{id}:
+    get:
+      summary: Resolve a by-reference credential_offer_uri
+      operationId: credentialOffer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Credential Offer this id points at
+          content:
+            application/json:
+              schema:
+                type: object
+                description: An OID4VCI Credential Offer (authorization_code grant, issuer_state set).
+        "404":
+          description: Unknown or already-expired offer id
   /oid4vci/v1/par:
     post:
       summary: Pushed Authorization Request (RFC 9126)
@@ -450,9 +470,13 @@ components:
       properties:
         issuance_id:
           type: string
-        credential_offer:
-          type: object
-          description: An OID4VCI Credential Offer (authorization_code grant, issuer_state set).
+        credential_offer_uri:
+          type: string
+          description: >
+            Resolves via GET /oid4vci/v1/credential-offer/{id} to an
+            OID4VCI Credential Offer (authorization_code grant,
+            issuer_state set).
+          example: "https://issuer.fikua.com/oid4vci/v1/credential-offer/RanT9LlMQaWW81xf9F_7tA"
     ListIssuanceRecordsResult:
       type: object
       properties:
