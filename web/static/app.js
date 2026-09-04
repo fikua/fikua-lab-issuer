@@ -1,13 +1,10 @@
-// S0: Theme toggle
+// S0: Theme toggle — disabled for now (light mode only, toggle hidden
+// in index.html). Auto-detection via prefers-color-scheme and the
+// saved-preference read are switched off; the toggle's click handler is
+// left wired up in case the button is ever unhidden again.
 (() => {
     const toggle = document.getElementById('theme-toggle');
     const html = document.documentElement;
-    const saved = localStorage.getItem('fikua-theme');
-    if (saved) {
-        html.setAttribute('data-theme', saved);
-    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        html.setAttribute('data-theme', 'dark');
-    }
     toggle.addEventListener('click', () => {
         const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
         html.setAttribute('data-theme', next);

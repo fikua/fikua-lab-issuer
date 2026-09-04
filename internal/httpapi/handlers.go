@@ -6,7 +6,9 @@
 package httpapi
 
 import (
+	_ "embed"
 	"encoding/json"
+	"html/template"
 	"net/http"
 
 	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
@@ -15,6 +17,16 @@ import (
 	"github.com/fikua/fikua-lab-issuer/internal/oid4vci"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
 )
+
+//go:embed authorize_error.html
+var authorizeErrorHTML string
+
+// authorizeErrorTemplate renders authorize_error.html — a human-readable
+// error page for GET /oid4vci/v1/authorize failures, since a browser (not
+// a wallet backend) is the one rendering this response, unlike every
+// other OAuth2/OID4VCI endpoint here which is called machine-to-machine
+// and can stay plain JSON.
+var authorizeErrorTemplate = template.Must(template.New("authorize_error").Parse(authorizeErrorHTML))
 
 // Handler serves the issuer's JSON API.
 type Handler struct {

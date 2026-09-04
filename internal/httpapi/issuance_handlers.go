@@ -110,7 +110,7 @@ func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	result, err := h.issuance.HandleAuthorize(r.URL.Query().Get("request_uri"), r.URL.Query().Get("client_id"))
 	if err != nil {
-		writeOAuthError(w, err)
+		writeAuthorizeError(w, err)
 		return
 	}
 	if result.IdentifyRedirect != "" {
@@ -119,7 +119,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	redirect, err := issuance.BuildAuthorizationRedirect(result, h.baseURL)
 	if err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error()))
+		writeAuthorizeError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error()))
 		return
 	}
 	http.Redirect(w, r, redirect, http.StatusFound)
@@ -360,4 +360,20 @@ func writeOAuthError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSON(w, exc.HTTPStatus, exc.Err)
+}
+
+// writeAuthorizeError renders authorizeErrorTemplate instead of JSON —
+// GET /oid4vci/v1/authorize is loaded directly in a browser (redirected
+// there by a wallet), so a failure here should read as a page, not a raw
+// JSON error body.
+func writeAuthorizeError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	oauthErr := oauth2.Error{Code: oauth2.InvalidRequest, Description: err.Error()}
+	if exc, ok := err.(*oauth2.Exception); ok {
+		status = exc.HTTPStatus
+		oauthErr = exc.Err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = authorizeErrorTemplate.Execute(w, oauthErr)
 }
