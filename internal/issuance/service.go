@@ -202,6 +202,14 @@ func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpop
 		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
 	}
 
+	// FAPI 2.0 Security Profile §5.3.2.2-1: only the authorization_code
+	// flow (response_type=code) is permitted — code id_token and other
+	// hybrid/implicit response types would return an id_token via the
+	// browser, where it can leak.
+	if responseType, ok := params["response_type"]; ok && responseType != "code" {
+		return "", 0, oauth2.BadRequest(oauth2.UnsupportedResponseType, "Only response_type=code is supported")
+	}
+
 	if method, ok := params["code_challenge_method"]; ok && method != "S256" {
 		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Only S256 code_challenge_method is supported")
 	}

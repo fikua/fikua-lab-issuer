@@ -10,7 +10,13 @@ const (
 	// InvalidClientAttestation, per ATCA draft-07 §6.2, MAY be used
 	// alongside the more general invalid_client when a client
 	// attestation or its proof-of-possession fails verification.
-	InvalidClientAttestation       = "invalid_client_attestation"
+	InvalidClientAttestation = "invalid_client_attestation"
+	// UnsupportedResponseType, per RFC 6749 §4.1.2.1, is returned when
+	// response_type isn't one this authorization server supports — this
+	// issuer only ever supports "code" (FAPI 2.0 Security Profile
+	// §5.3.2.2-1 forbids hybrid/implicit response types like
+	// "code id_token").
+	UnsupportedResponseType        = "unsupported_response_type"
 	UnsupportedGrantType           = "unsupported_grant_type"
 	InvalidToken                   = "invalid_token"
 	UnsupportedCredentialType      = "unsupported_credential_type"

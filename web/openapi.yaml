@@ -178,6 +178,14 @@ paths:
                   type: string
                 redirect_uri:
                   type: string
+                response_type:
+                  type: string
+                  enum: [code]
+                  description: >
+                    Only "code" is supported — FAPI 2.0 Security Profile
+                    §5.3.2.2-1 forbids hybrid/implicit response types
+                    (e.g. "code id_token"), which would return an
+                    id_token via the browser.
                 code_challenge:
                   type: string
                 code_challenge_method:
