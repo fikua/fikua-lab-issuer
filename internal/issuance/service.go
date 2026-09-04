@@ -183,7 +183,17 @@ func BuildAuthorizationRedirect(result AuthorizeResult, issuer string) (string, 
 // 9126). Client attestation is mandatory; code_challenge_method, if
 // given, must be S256. Returns the request_uri and its (advertised, not
 // server-enforced — see the migration notes) 60s lifetime.
-func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader string) (requestURI string, expiresIn int, err error) {
+//
+// DPoP-PAR binding (RFC 9449 §10.1): a client may bind the eventual
+// authorization code to a DPoP key either by sending a dpop_jkt form
+// parameter, or by attaching a DPoP proof to the PAR request itself
+// (in which case the proof's key thumbprint is treated as if it were
+// dpop_jkt). Both mechanisms must be supported, and if both are used at
+// once, the thumbprints must match — the resolved thumbprint, whichever
+// path it came from, is stored on the PAR params under "dpop_jkt" so
+// HandleAuthCodeToken can enforce it against the token endpoint's own
+// DPoP proof later.
+func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpopHeader string) (requestURI string, expiresIn int, err error) {
 	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, params["client_assertion_type"], params["client_assertion"])
 	if attErr != nil {
 		return "", 0, attErr
@@ -194,6 +204,21 @@ func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader strin
 
 	if method, ok := params["code_challenge_method"]; ok && method != "S256" {
 		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Only S256 code_challenge_method is supported")
+	}
+
+	if dpopHeader != "" {
+		dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/par", "", s.jtis)
+		if err != nil {
+			return "", 0, err
+		}
+		thumbprint, err := oauth2.DPoPThumbprint(dpopKey)
+		if err != nil {
+			return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to compute DPoP thumbprint: "+err.Error())
+		}
+		if declared := params["dpop_jkt"]; declared != "" && declared != thumbprint {
+			return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "dpop_jkt does not match the DPoP proof's key")
+		}
+		params["dpop_jkt"] = thumbprint
 	}
 
 	requestURI = requestURIPrefix + session.RandomToken(16)
@@ -283,6 +308,9 @@ func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
 		metadata["code_challenge"] = codeChallenge
 	}
+	if dpopJKT := params["dpop_jkt"]; dpopJKT != "" {
+		metadata["dpop_jkt"] = dpopJKT
+	}
 
 	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
 	code := s.sessions.CreateAuthCode(sess)
@@ -335,6 +363,9 @@ func (s *Service) CompleteIdentification(sessionToken string, credentialData map
 	metadata := map[string]any{"issuanceRecordId": rec.ID}
 	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
 		metadata["code_challenge"] = codeChallenge
+	}
+	if dpopJKT := params["dpop_jkt"]; dpopJKT != "" {
+		metadata["dpop_jkt"] = dpopJKT
 	}
 	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
 	code := s.sessions.CreateAuthCode(sess)
@@ -409,6 +440,16 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 	sess, ok := s.sessions.ConsumeAuthCode(req.Code)
 	if !ok {
 		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid authorization code")
+	}
+
+	// DPoP-PAR binding (RFC 9449 §10.1): if a dpop_jkt was bound to this
+	// authorization at PAR time, the token endpoint's own DPoP proof must
+	// be for that exact key.
+	if boundJKT, _ := sess.Metadata["dpop_jkt"].(string); boundJKT != "" {
+		thumbprint, err := oauth2.DPoPThumbprint(dpopKey)
+		if err != nil || thumbprint != boundJKT {
+			return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "DPoP proof key does not match the one bound at the PAR endpoint")
+		}
 	}
 
 	if req.CodeVerifier == "" {

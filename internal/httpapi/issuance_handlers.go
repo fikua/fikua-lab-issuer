@@ -93,8 +93,9 @@ func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wiaHeader, popHeader := clientAttestationHeaders(r)
+	dpopHeader := r.Header.Get("DPoP")
 
-	requestURI, expiresIn, err := h.issuance.HandlePar(form, wiaHeader, popHeader)
+	requestURI, expiresIn, err := h.issuance.HandlePar(form, wiaHeader, popHeader, dpopHeader)
 	if err != nil {
 		writeOAuthError(w, err)
 		return

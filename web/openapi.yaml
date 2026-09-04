@@ -151,10 +151,22 @@ paths:
         Client attestation (ATCA draft-07, via the
         OAuth-Client-Attestation / OAuth-Client-Attestation-PoP headers)
         is mandatory. code_challenge_method, if present, must be S256.
+        DPoP-PAR binding (RFC 9449 §10.1) is supported via either the
+        dpop_jkt form parameter or a DPoP proof attached to this request
+        (or both, in which case they must agree) — whichever thumbprint
+        results is enforced again at the token endpoint.
       operationId: par
       parameters:
         - $ref: "#/components/parameters/ClientAttestationHeader"
         - $ref: "#/components/parameters/ClientAttestationPoPHeader"
+        - name: DPoP
+          in: header
+          description: >
+            Optional DPoP proof JWT (RFC 9449), bound to POST
+            {issuer}/oid4vci/v1/par. Its key thumbprint is treated as
+            dpop_jkt for this authorization.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -175,6 +187,12 @@ paths:
                   type: string
                 state:
                   type: string
+                dpop_jkt:
+                  type: string
+                  description: >
+                    RFC 7638 JWK thumbprint binding the eventual
+                    authorization code to a DPoP key, per RFC 9449 §10.
+                    Must match the DPoP header's key, if both are present.
       responses:
         "201":
           description: Pushed authorization request accepted
