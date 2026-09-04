@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -55,13 +56,14 @@ const requestURIPrefix = "urn:ietf:params:oauth:request_uri:"
 // mandatory at the token endpoint. There is no plain/pre-authorized_code
 // profile — this issuer does not implement one.
 type Service struct {
-	baseURL      string
-	issuerKey    *fikuacrypto.SigningKey
-	sessions     *session.Store
-	issuances    RecordStore
-	statusList   StatusListStore
-	jtis         *oauth2.JTIStore
-	attestations *oauth2.ClientAttestationValidator
+	baseURL         string
+	identifyBaseURL string
+	issuerKey       *fikuacrypto.SigningKey
+	sessions        *session.Store
+	issuances       RecordStore
+	statusList      StatusListStore
+	jtis            *oauth2.JTIStore
+	attestations    *oauth2.ClientAttestationValidator
 
 	statusCacheMu    sync.Mutex
 	statusCacheToken string
@@ -77,16 +79,20 @@ type Service struct {
 // Java issuer's "no root-ca.crt configured" fallback. issuances is either
 // the in-memory Store (dev/no-Postgres fallback) or a PostgresStore.
 // statusList is the same underlying store, typed as StatusListStore — see
-// cmd/issuer/main.go's wiring.
-func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, statusList StatusListStore, walletProviderAnchor *x509.Certificate) *Service {
+// cmd/issuer/main.go's wiring. identifyBaseURL, if non-empty, is where
+// HandleAuthorize redirects for real end-user identification instead of
+// synthesizing PID data — see IdentifyBaseURL's doc comment in
+// internal/config.
+func NewService(baseURL string, identifyBaseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, statusList StatusListStore, walletProviderAnchor *x509.Certificate) *Service {
 	return &Service{
-		baseURL:      baseURL,
-		issuerKey:    issuerKey,
-		sessions:     sessions,
-		issuances:    issuances,
-		statusList:   statusList,
-		jtis:         oauth2.NewJTIStore(),
-		attestations: oauth2.NewClientAttestationValidator(walletProviderAnchor, baseURL),
+		baseURL:         baseURL,
+		identifyBaseURL: identifyBaseURL,
+		issuerKey:       issuerKey,
+		sessions:        sessions,
+		issuances:       issuances,
+		statusList:      statusList,
+		jtis:            oauth2.NewJTIStore(),
+		attestations:    oauth2.NewClientAttestationValidator(walletProviderAnchor, baseURL),
 	}
 }
 
@@ -149,6 +155,30 @@ func (s *Service) GetCredentialOffer(id string) (string, bool) {
 	return s.sessions.GetCredentialOffer(id)
 }
 
+// BuildAuthorizationRedirect adds the authorization response params
+// (code, state, iss) to result.RedirectURI. Registered redirect_uris can
+// already carry their own query string (RFC 6749 §3.1.2 explicitly
+// allows this — the OIDF conformance suite's "matching callback
+// parameters" test registers one with ?dummy1=lorem&dummy2=ipsum and
+// requires it survive intact), so this must merge into any existing
+// query rather than always starting a fresh "?". Shared by the httpapi
+// layer's /authorize 302 and CompleteIdentification's JSON redirect
+// field — both produce the exact same URL shape.
+func BuildAuthorizationRedirect(result AuthorizeResult, issuer string) (string, error) {
+	u, err := url.Parse(result.RedirectURI)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("code", result.Code)
+	if result.State != "" {
+		q.Set("state", result.State)
+	}
+	q.Set("iss", issuer)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
 // HandlePar implements the Pushed Authorization Request endpoint (RFC
 // 9126). Client attestation is mandatory; code_challenge_method, if
 // given, must be S256. Returns the request_uri and its (advertised, not
@@ -171,11 +201,16 @@ func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader strin
 	return requestURI, 60, nil
 }
 
-// AuthorizeResult is the outcome of GET /oid4vci/v1/authorize.
+// AuthorizeResult is the outcome of GET /oid4vci/v1/authorize. Exactly
+// one of two shapes applies: IdentifyRedirect non-empty means "302 the
+// browser here instead, ignore the rest" (deferring to the end-user
+// identification flow); otherwise Code/RedirectURI/State carry the
+// completed OAuth2 authorization response.
 type AuthorizeResult struct {
-	Code        string
-	RedirectURI string
-	State       string
+	Code             string
+	RedirectURI      string
+	State            string
+	IdentifyRedirect string
 }
 
 // defaultPIDCredentialData is the synthetic PID data used when
@@ -197,18 +232,26 @@ var defaultPIDCredentialData = map[string]any{
 //
 // A real issuer would authenticate the end-user interactively at this
 // endpoint (per OID4VCI's authorization_code flow) and derive the
-// credential data from that identity check. This lab issuer has no such
-// identity provider — it normally relies on the issuance_record an
-// operator pre-creates via POST /oid4vci/v1/issuance (through the admin
-// UI or directly) as a stand-in for that step. But a spec-conformant
-// wallet/test client has no reason to know about that out-of-band step:
-// it may reuse a credential_offer's issuer_state for a second
-// authorization (e.g. a conformance test exercising two OAuth2 clients
-// against the same offer, or a completely fresh authorization request
-// with no offer/issuer_state at all). Either way, if no issuance record
-// can be resolved, one is created here with synthetic default data
-// instead of failing the flow — mirroring what an interactive
-// login step would have produced.
+// credential data from that identity check. When no issuer_state
+// resolves an existing issuance record, this now has two possible
+// behaviors:
+//
+//   - identifyBaseURL configured: defer to the real end-user
+//     identification flow (see ResolveIdentifyScope/CompleteIdentification)
+//     by minting a pending-authorization token and returning
+//     AuthorizeResult.IdentifyRedirect — the httpapi layer 302s the
+//     browser there instead of completing the OAuth2 response here.
+//   - identifyBaseURL unset (the default): fall back to synthesizing PID
+//     data, exactly as before. Kept specifically because the OIDF
+//     conformance suite's automated client cannot complete an
+//     interactive identification form — see defaultPIDCredentialData.
+//
+// A spec-conformant wallet/test client has no reason to know about
+// issuer_state as an out-of-band mechanism at all: it may reuse a
+// credential_offer's issuer_state for a second authorization (e.g. a
+// conformance test exercising two OAuth2 clients against the same
+// offer), or send a completely fresh authorization request with no
+// issuer_state. Either case hits the same two-way branch above.
 func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 	if requestURI == "" {
 		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing request_uri")
@@ -218,15 +261,14 @@ func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired request_uri")
 	}
 
-	metadata := map[string]any{}
-	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
-		metadata["code_challenge"] = codeChallenge
-	}
-
 	var rec Record
 	var foundRecord bool
 	if issuerState := params["issuer_state"]; issuerState != "" {
 		rec, foundRecord = s.issuances.FindByIssuerState(issuerState)
+	}
+	if !foundRecord && s.identifyBaseURL != "" {
+		token := s.sessions.StorePendingAuth(params)
+		return AuthorizeResult{IdentifyRedirect: s.identifyBaseURL + "?session=" + token}, nil
 	}
 	if !foundRecord {
 		credentialDataJSON, err := json.Marshal(defaultPIDCredentialData)
@@ -236,12 +278,75 @@ func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 		rec = s.issuances.Create(PIDConfigID, string(credentialDataJSON), "conformance_test", "auto-created at /authorize (no issuer_state)")
 		s.issuances.UpdateStatus(rec.ID, "offer_created")
 	}
-	metadata["issuanceRecordId"] = rec.ID
+
+	metadata := map[string]any{"issuanceRecordId": rec.ID}
+	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
+		metadata["code_challenge"] = codeChallenge
+	}
 
 	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
 	code := s.sessions.CreateAuthCode(sess)
 
 	return AuthorizeResult{Code: code, RedirectURI: params["redirect_uri"], State: params["state"]}, nil
+}
+
+// ResolveIdentifyScope is a non-destructive lookup for GET
+// /identify/claims: given a pending-authorization session token (minted
+// by HandleAuthorize's identify-redirect branch), returns the
+// credential_configuration_id the identification form should collect
+// claims for. This issuer only ever issues PID, so it's always
+// PIDConfigID today — kept as a method (not a constant) so a future
+// scope-to-config mapping has one place to live if this issuer ever
+// grows a second credential type reachable via wallet-initiated auth.
+func (s *Service) ResolveIdentifyScope(sessionToken string) (credentialConfigID string, err error) {
+	if _, ok := s.sessions.GetPendingAuth(sessionToken); !ok {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
+	}
+	return PIDConfigID, nil
+}
+
+// CompleteIdentification implements POST /identify/complete: it turns a
+// completed identification form into the same OAuth2 authorization
+// response HandleAuthorize's normal path produces, resuming the flow
+// that was deferred to the identify redirect.
+//
+// Replay-safe for identifyReplayTTL: a retried POST for the same
+// session (double form submit, flaky network) gets back the exact same
+// redirect instead of "invalid or expired session", since the
+// pending-authorization token itself is consumed destructively
+// (single-use) on the first successful call.
+func (s *Service) CompleteIdentification(sessionToken string, credentialData map[string]any, sourceType, sourceRef string) (redirect string, err error) {
+	if cached, ok := s.sessions.GetIdentifyReplay(sessionToken); ok {
+		return cached, nil
+	}
+
+	params, ok := s.sessions.ConsumePendingAuth(sessionToken)
+	if !ok {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
+	}
+
+	credentialDataJSON, err := json.Marshal(credentialData)
+	if err != nil {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid credential_data: "+err.Error())
+	}
+	rec := s.issuances.Create(PIDConfigID, string(credentialDataJSON), sourceType, sourceRef)
+	s.issuances.UpdateStatus(rec.ID, "offer_created")
+
+	metadata := map[string]any{"issuanceRecordId": rec.ID}
+	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
+		metadata["code_challenge"] = codeChallenge
+	}
+	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
+	code := s.sessions.CreateAuthCode(sess)
+
+	result := AuthorizeResult{Code: code, RedirectURI: params["redirect_uri"], State: params["state"]}
+	redirect, err = BuildAuthorizationRedirect(result, s.baseURL)
+	if err != nil {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error())
+	}
+
+	s.sessions.StoreIdentifyReplay(sessionToken, redirect)
+	return redirect, nil
 }
 
 // HandleAuthCodeToken implements the authorization_code grant at the

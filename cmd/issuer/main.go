@@ -64,8 +64,14 @@ func main() {
 		log.Fatalf("setting up issuance store: %v", err)
 	}
 
+	if cfg.IdentifyBaseURL == "" {
+		log.Printf("warning: no FIKUA_IDENTIFY_BASE_URL configured — using synthetic PID fallback at /authorize (conformance-suite mode)")
+	} else {
+		log.Printf("end-user identification via %s", cfg.IdentifyBaseURL)
+	}
+
 	sessions := session.NewStore()
-	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, issuances.(issuance.StatusListStore), walletProviderAnchor)
+	issuanceService := issuance.NewService(cfg.BaseURL, cfg.IdentifyBaseURL, issuerKey, sessions, issuances, issuances.(issuance.StatusListStore), walletProviderAnchor)
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {

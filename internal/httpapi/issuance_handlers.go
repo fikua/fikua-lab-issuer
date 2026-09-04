@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 
+	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
 )
@@ -108,7 +108,11 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, err)
 		return
 	}
-	redirect, err := appendAuthorizationResponse(result, h.baseURL)
+	if result.IdentifyRedirect != "" {
+		http.Redirect(w, r, result.IdentifyRedirect, http.StatusFound)
+		return
+	}
+	redirect, err := issuance.BuildAuthorizationRedirect(result, h.baseURL)
 	if err != nil {
 		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error()))
 		return
@@ -116,26 +120,68 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
-// appendAuthorizationResponse adds the authorization response params
-// (code, state, iss) to result.RedirectURI. Registered redirect_uris can
-// already carry their own query string (RFC 6749 §3.1.2 explicitly
-// allows this — the OIDF conformance suite's "matching callback
-// parameters" test registers one with ?dummy1=lorem&dummy2=ipsum and
-// requires it survive intact), so this must merge into any existing
-// query rather than always starting a fresh "?".
-func appendAuthorizationResponse(result issuance.AuthorizeResult, issuer string) (string, error) {
-	u, err := url.Parse(result.RedirectURI)
+// identifyClaims implements GET /identify/claims: resolves which
+// credential_configuration_id a pending identification session is for,
+// then reuses the same registry-backed claims/display lookup
+// credentialIssuerMetadata already does — no claim metadata is
+// hardcoded here.
+func (h *Handler) identifyClaims(w http.ResponseWriter, r *http.Request) {
+	sessionToken := r.URL.Query().Get("session")
+	credentialConfigID, err := h.issuance.ResolveIdentifyScope(sessionToken)
 	if err != nil {
-		return "", err
+		writeOAuthError(w, err)
+		return
 	}
-	q := u.Query()
-	q.Set("code", result.Code)
-	if result.State != "" {
-		q.Set("state", result.State)
+
+	var claims []credentialconfig.Claim
+	var display []credentialconfig.Display
+	for _, schemeID := range h.issuableSchemes {
+		def, ok := h.cache.Get(schemeID)
+		if !ok {
+			continue
+		}
+		for id, cfg := range credentialconfig.Build(def) {
+			if id != credentialConfigID {
+				continue
+			}
+			claims = cfg.CredentialMetadata.Claims
+			display = cfg.CredentialMetadata.Display
+		}
 	}
-	q.Set("iss", issuer)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"credential_configuration_id": credentialConfigID,
+		"claims":                      claims,
+		"display":                     display,
+	})
+}
+
+// identifyCompleteRequest is POST /identify/complete's body — matches
+// fikua-lab-identify's app.js submitIdentification() exactly.
+type identifyCompleteRequest struct {
+	Session        string         `json:"session"`
+	CredentialData map[string]any `json:"credential_data"`
+	SourceType     string         `json:"source_type"`
+	SourceRef      string         `json:"source_ref"`
+}
+
+// identifyComplete implements POST /identify/complete: turns a
+// completed identification form into the OAuth2 authorization response
+// the deferred /authorize would have produced, and hands the frontend a
+// redirect URL to follow (it does not itself redirect — the frontend's
+// own JS drives window.location.href, per app.js).
+func (h *Handler) identifyComplete(w http.ResponseWriter, r *http.Request) {
+	var req identifyCompleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid request body: "+err.Error()))
+		return
+	}
+	redirect, err := h.issuance.CompleteIdentification(req.Session, req.CredentialData, req.SourceType, req.SourceRef)
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"redirect": redirect})
 }
 
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {

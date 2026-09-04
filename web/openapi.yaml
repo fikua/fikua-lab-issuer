@@ -204,7 +204,85 @@ paths:
       responses:
         "302":
           description: >
-            Redirect to the client's redirect_uri with ?code=...&state=...&iss=...
+            Redirect to the client's redirect_uri with ?code=...&state=...&iss=..., or
+            (when no issuer_state resolves an issuance record and end-user
+            identification is configured) to the identification frontend.
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/identify/claims:
+    get:
+      summary: Claims to collect for a pending identification session
+      description: >
+        Resolves a pending-authorization session token (minted by
+        /authorize's identify-redirect branch) to the
+        credential_configuration_id it's for, and returns the claims/display
+        metadata the identification frontend should render a form from —
+        the same registry-backed metadata .well-known/openid-credential-issuer
+        exposes.
+      operationId: identifyClaims
+      parameters:
+        - name: session
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Claims metadata for this session's credential
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credential_configuration_id:
+                    type: string
+                  claims:
+                    type: array
+                    items:
+                      type: object
+                  display:
+                    type: array
+                    items:
+                      type: object
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/identify/complete:
+    post:
+      summary: Complete a pending identification session
+      description: >
+        Resumes the authorization_code flow /authorize deferred to
+        identification: creates an issuance record from the submitted
+        credential_data and mints a real authorization code, returning the
+        redirect URL the frontend should navigate to. Replay-safe for a
+        short window after the first successful call (same session token
+        returns the same redirect instead of erroring).
+      operationId: identifyComplete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session, credential_data]
+              properties:
+                session:
+                  type: string
+                credential_data:
+                  type: object
+                source_type:
+                  type: string
+                source_ref:
+                  type: string
+      responses:
+        "200":
+          description: Identification completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
         "400":
           $ref: "#/components/responses/OAuthError"
   /oid4vci/v1/token:

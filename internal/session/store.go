@@ -31,6 +31,17 @@ type Store struct {
 	accessTokens     map[string]Data
 	nonces           map[string]struct{}
 	credentialOffers map[string]string
+	pendingAuth      map[string]map[string]string
+	identifyReplay   map[string]identifyReplayEntry
+}
+
+// identifyReplayEntry is a cached /identify/complete result plus its
+// expiry — the one place in this store with an actual TTL (everything
+// else relies on single-use consumption instead). Checked lazily on
+// read, matching this package's no-background-sweeper style.
+type identifyReplayEntry struct {
+	Redirect string
+	Expiry   time.Time
 }
 
 // NewStore builds an empty Store.
@@ -41,6 +52,8 @@ func NewStore() *Store {
 		accessTokens:     make(map[string]Data),
 		nonces:           make(map[string]struct{}),
 		credentialOffers: make(map[string]string),
+		pendingAuth:      make(map[string]map[string]string),
+		identifyReplay:   make(map[string]identifyReplayEntry),
 	}
 }
 
@@ -174,4 +187,70 @@ func (s *Store) GetCredentialOffer(id string) (string, bool) {
 	defer s.mu.Unlock()
 	offerJSON, ok := s.credentialOffers[id]
 	return offerJSON, ok
+}
+
+// StorePendingAuth stores the OAuth2 params for an authorization request
+// that's been deferred to the end-user identification flow, keyed by a
+// fresh session token this returns. No TTL — matching the Java issuer's
+// InMemorySessionStore, it lives until ConsumePendingAuth removes it or
+// the process restarts.
+func (s *Store) StorePendingAuth(params map[string]string) string {
+	token := RandomToken(16)
+	s.mu.Lock()
+	s.pendingAuth[token] = params
+	s.mu.Unlock()
+	return token
+}
+
+// GetPendingAuth is a non-destructive lookup of a pending authorization's
+// params — used by GET /identify/claims, which a page may legitimately
+// reload before ever submitting.
+func (s *Store) GetPendingAuth(token string) (params map[string]string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	params, ok = s.pendingAuth[token]
+	return params, ok
+}
+
+// ConsumePendingAuth atomically removes and returns the params stored
+// under token. ok is false if unknown (already consumed, or never
+// stored).
+func (s *Store) ConsumePendingAuth(token string) (params map[string]string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	params, ok = s.pendingAuth[token]
+	if ok {
+		delete(s.pendingAuth, token)
+	}
+	return params, ok
+}
+
+// identifyReplayTTL bounds how long a completed /identify/complete
+// result stays replayable — long enough to absorb a double form submit
+// or a flaky network retry, short enough that reusing it later isn't a
+// realistic risk.
+const identifyReplayTTL = 120 * time.Second
+
+// StoreIdentifyReplay caches redirect as the result for token, replayable
+// for identifyReplayTTL — called once, right after ConsumePendingAuth
+// succeeds, so a retried POST /identify/complete for the same session
+// gets the same answer instead of "invalid or expired session".
+func (s *Store) StoreIdentifyReplay(token, redirect string) {
+	s.mu.Lock()
+	s.identifyReplay[token] = identifyReplayEntry{Redirect: redirect, Expiry: time.Now().Add(identifyReplayTTL)}
+	s.mu.Unlock()
+}
+
+// GetIdentifyReplay returns the cached /identify/complete result for
+// token, if any and not yet expired. Lazy expiry: an expired entry is
+// treated as absent (and left in place — this store has no background
+// sweeper anywhere, matching its existing style).
+func (s *Store) GetIdentifyReplay(token string) (redirect string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, found := s.identifyReplay[token]
+	if !found || time.Now().After(entry.Expiry) {
+		return "", false
+	}
+	return entry.Redirect, true
 }

@@ -45,6 +45,16 @@ type Config struct {
 	// falls back to an in-memory store (data lost on restart), which is
 	// fine for local development but not for a real deployment.
 	DBURL string
+	// IdentifyBaseURL, if non-empty, is the end-user identification
+	// frontend /authorize redirects to when no issuer_state resolves an
+	// existing issuance record — the real substitute for interactive
+	// login this OID4VCI authorization_code flow otherwise has none of.
+	// Empty disables it: HandleAuthorize falls back to synthesizing PID
+	// data instead (see internal/issuance.defaultPIDCredentialData),
+	// which is what keeps the OIDF conformance suite's automated client
+	// — which cannot complete an interactive identification form —
+	// working.
+	IdentifyBaseURL string
 }
 
 // Load reads configuration from environment variables, applying defaults
@@ -64,6 +74,7 @@ func Load() Config {
 		DSSCredentialID:         getenv("FIKUA_DSS_CREDENTIAL_ID", ""),
 		DSSCredentialPassword:   getenv("FIKUA_DSS_CREDENTIAL_PASSWORD", ""),
 		DBURL:                   getenv("FIKUA_DB_URL", ""),
+		IdentifyBaseURL:         getenv("FIKUA_IDENTIFY_BASE_URL", ""),
 	}
 }
 
