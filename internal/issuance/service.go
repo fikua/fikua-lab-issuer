@@ -199,6 +199,13 @@ func BuildAuthorizationRedirect(result AuthorizeResult, issuer string) (string, 
 // HandleAuthCodeToken can enforce it against the token endpoint's own
 // DPoP proof later.
 func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpopHeader string) (requestURI string, expiresIn int, err error) {
+	// RFC 9126 §2.1: request_uri is the one authorization-endpoint
+	// parameter a pushed authorization request MUST NOT carry — it's
+	// what this endpoint produces, not something a client can push in.
+	if params["request_uri"] != "" {
+		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "request_uri must not be provided in a pushed authorization request")
+	}
+
 	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, params["client_assertion_type"], params["client_assertion"])
 	if attErr != nil {
 		return "", 0, attErr
@@ -299,13 +306,23 @@ var defaultPIDCredentialData = map[string]any{
 // conformance test exercising two OAuth2 clients against the same
 // offer), or send a completely fresh authorization request with no
 // issuer_state. Either case hits the same two-way branch above.
-func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
+//
+// queryClientID, if non-empty, is the client_id query parameter this
+// GET request itself carried (distinct from the PAR-time client_id that
+// minted requestURI). PAR §2.2 requires a request_uri be bound to the
+// client that pushed it — RFC 9126's PAR-3-3 conformance check catches
+// exactly this: presenting client A's request_uri while claiming to be
+// client B.
+func (s *Service) HandleAuthorize(requestURI, queryClientID string) (AuthorizeResult, error) {
 	if requestURI == "" {
 		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing request_uri")
 	}
 	params, ok := s.sessions.ConsumeParRequest(requestURI)
 	if !ok {
 		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired request_uri")
+	}
+	if queryClientID != "" && params["client_id"] != "" && queryClientID != params["client_id"] {
+		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "request_uri is bound to a different client")
 	}
 
 	var rec Record

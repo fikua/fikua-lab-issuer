@@ -104,7 +104,7 @@ func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
-	result, err := h.issuance.HandleAuthorize(r.URL.Query().Get("request_uri"))
+	result, err := h.issuance.HandleAuthorize(r.URL.Query().Get("request_uri"), r.URL.Query().Get("client_id"))
 	if err != nil {
 		writeOAuthError(w, err)
 		return

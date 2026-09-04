@@ -154,7 +154,12 @@ paths:
         DPoP-PAR binding (RFC 9449 §10.1) is supported via either the
         dpop_jkt form parameter or a DPoP proof attached to this request
         (or both, in which case they must agree) — whichever thumbprint
-        results is enforced again at the token endpoint.
+        results is enforced again at the token endpoint. Per RFC 9126
+        §2.1, request_uri MUST NOT be provided here — it's this
+        endpoint's output, not an input. The resulting request_uri is
+        bound to the client_id that pushed it (RFC 9126 §2.2); a later
+        GET /authorize presenting it with a different client_id is
+        rejected.
       operationId: par
       parameters:
         - $ref: "#/components/parameters/ClientAttestationHeader"
@@ -225,6 +230,14 @@ paths:
         - name: request_uri
           in: query
           required: true
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          required: false
+          description: >
+            If present, must match the client_id the request_uri was
+            pushed with (RFC 9126 §2.2) — otherwise rejected.
           schema:
             type: string
       responses:
