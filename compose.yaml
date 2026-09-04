@@ -32,6 +32,16 @@ services:
       # Go-native DSN (postgresql://user:pass@host:port/db) — NOT the
       # jdbc:postgresql:// format fikua-lab's Java services use.
       FIKUA_DB_URL: postgresql://${FIKUA_ISSUER_POSTGRES_USER:-fikua}:${FIKUA_ISSUER_POSTGRES_PASSWORD}@fikua-lab-issuer-db:5432/fikua_lab_issuer?sslmode=disable
+      # Remote signing via the Fikua DSS (tenant 1 — see
+      # fikua-lab/dss/compose.yaml). Without these, the issuer refuses to
+      # start (internal/crypto.LoadFromPEM has no ephemeral fallback —
+      # see its doc comment) rather than sign with a throwaway CA no
+      # relying party trusts.
+      FIKUA_DSS_URL: ${FIKUA_DSS_URL:-https://dss.fikua.com}
+      FIKUA_DSS_CLIENT_ID: ${FIKUA_DSS_CLIENT_ID:-fikua-issuer}
+      FIKUA_DSS_CLIENT_SECRET: ${FIKUA_DSS_CLIENT_SECRET:?FIKUA_DSS_CLIENT_SECRET must be set in .env}
+      FIKUA_DSS_CREDENTIAL_ID: ${FIKUA_DSS_CREDENTIAL_ID:-fikua-credential-001}
+      FIKUA_DSS_CREDENTIAL_PASSWORD: ${FIKUA_DSS_CREDENTIAL_PASSWORD:?FIKUA_DSS_CREDENTIAL_PASSWORD must be set in .env}
     depends_on:
       fikua-lab-issuer-db:
         condition: service_healthy
