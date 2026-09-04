@@ -184,6 +184,30 @@ func (h *Handler) identifyComplete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"redirect": redirect})
 }
 
+// identifyRejectRequest is POST /identify/reject's body.
+type identifyRejectRequest struct {
+	Session string `json:"session"`
+}
+
+// identifyReject implements the user-cancels-authentication path: the
+// frontend's "Cancel"/"Deny" action calls this instead of
+// /identify/complete, and gets back a redirect URL carrying
+// error=access_denied (RFC 6749 §4.1.2.1) instead of an authorization
+// code.
+func (h *Handler) identifyReject(w http.ResponseWriter, r *http.Request) {
+	var req identifyRejectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid request body: "+err.Error()))
+		return
+	}
+	redirect, err := h.issuance.RejectIdentification(req.Session)
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"redirect": redirect})
+}
+
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 	form, err := parseForm(r)
 	if err != nil {

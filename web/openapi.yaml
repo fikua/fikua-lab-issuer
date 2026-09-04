@@ -285,6 +285,37 @@ paths:
                     type: string
         "400":
           $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/identify/reject:
+    post:
+      summary: Reject a pending identification session
+      description: >
+        The user-cancels-authentication path (RFC 6749 §4.1.2.1): no
+        issuance record is created, and the returned redirect URL carries
+        error=access_denied instead of an authorization code. Replay-safe
+        the same way /identify/complete is.
+      operationId: identifyReject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session]
+              properties:
+                session:
+                  type: string
+      responses:
+        "200":
+          description: Identification rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
+        "400":
+          $ref: "#/components/responses/OAuthError"
   /oid4vci/v1/token:
     post:
       summary: Token endpoint — authorization_code grant, DPoP-bound

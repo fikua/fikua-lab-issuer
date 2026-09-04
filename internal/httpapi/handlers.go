@@ -50,6 +50,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /oid4vci/v1/authorize", h.authorize)
 	mux.HandleFunc("GET /oid4vci/v1/identify/claims", h.identifyClaims)
 	mux.HandleFunc("POST /oid4vci/v1/identify/complete", h.identifyComplete)
+	mux.HandleFunc("POST /oid4vci/v1/identify/reject", h.identifyReject)
 	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)

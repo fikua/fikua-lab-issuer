@@ -349,6 +349,41 @@ func (s *Service) CompleteIdentification(sessionToken string, credentialData map
 	return redirect, nil
 }
 
+// RejectIdentification implements the user-cancels-authentication path:
+// per RFC 6749 §4.1.2.1, when the resource owner denies the request, the
+// authorization server redirects back to redirect_uri with
+// error=access_denied (never a JSON error body — the client is waiting
+// on a redirect, exactly like the success path). No issuance record is
+// created. Replay-safe the same way CompleteIdentification is, and
+// shares its replay cache — a session can be completed or rejected, but
+// not both, and either outcome replays identically on a retried POST.
+func (s *Service) RejectIdentification(sessionToken string) (redirect string, err error) {
+	if cached, ok := s.sessions.GetIdentifyReplay(sessionToken); ok {
+		return cached, nil
+	}
+
+	params, ok := s.sessions.ConsumePendingAuth(sessionToken)
+	if !ok {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
+	}
+
+	u, err := url.Parse(params["redirect_uri"])
+	if err != nil {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error())
+	}
+	q := u.Query()
+	q.Set("error", "access_denied")
+	q.Set("error_description", "The end-user denied the authorization request")
+	if params["state"] != "" {
+		q.Set("state", params["state"])
+	}
+	u.RawQuery = q.Encode()
+	redirect = u.String()
+
+	s.sessions.StoreIdentifyReplay(sessionToken, redirect)
+	return redirect, nil
+}
+
 // HandleAuthCodeToken implements the authorization_code grant at the
 // token endpoint: client attestation and DPoP are validated, then the
 // authorization code is consumed (irrecoverably — a subsequent PKCE
