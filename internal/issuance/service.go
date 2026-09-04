@@ -231,7 +231,12 @@ func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpop
 		return "", 0, oauth2.BadRequest(oauth2.UnsupportedResponseType, "Only response_type=code is supported")
 	}
 
-	if method, ok := params["code_challenge_method"]; ok && method != "S256" {
+	// FAPI 2.0 Security Profile §5.3.2.2-5 / RFC 7636: PKCE is mandatory,
+	// not merely validated when present.
+	if params["code_challenge"] == "" {
+		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "code_challenge is required")
+	}
+	if method := params["code_challenge_method"]; method != "S256" {
 		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Only S256 code_challenge_method is supported")
 	}
 
@@ -506,8 +511,12 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 		}
 	}
 
+	// RFC 7636 §4.6: a missing code_verifier is a PKCE verification
+	// failure like any other, and must be reported the same way
+	// (invalid_grant) — not invalid_request, which the OIDF conformance
+	// suite (RFC6749-5.2/RFC7636-4.6) treats as a distinct, wrong error.
 	if req.CodeVerifier == "" {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing code_verifier")
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing code_verifier")
 	}
 	storedChallenge, _ := sess.Metadata["code_challenge"].(string)
 	if storedChallenge == "" || !oauth2.VerifyPKCES256(req.CodeVerifier, storedChallenge) {

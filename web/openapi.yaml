@@ -178,6 +178,7 @@ paths:
           application/x-www-form-urlencoded:
             schema:
               type: object
+              required: [code_challenge, code_challenge_method]
               properties:
                 client_id:
                   type: string
@@ -193,6 +194,9 @@ paths:
                     id_token via the browser.
                 code_challenge:
                   type: string
+                  description: >
+                    Required — FAPI 2.0 Security Profile §5.3.2.2-5
+                    mandates PKCE, not merely validates it when present.
                 code_challenge_method:
                   type: string
                   enum: [S256]
