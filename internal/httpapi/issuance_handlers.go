@@ -108,12 +108,34 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, err)
 		return
 	}
-	redirect := result.RedirectURI + "?code=" + result.Code
-	if result.State != "" {
-		redirect += "&state=" + result.State
+	redirect, err := appendAuthorizationResponse(result, h.baseURL)
+	if err != nil {
+		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error()))
+		return
 	}
-	redirect += "&iss=" + url.QueryEscape(h.baseURL)
 	http.Redirect(w, r, redirect, http.StatusFound)
+}
+
+// appendAuthorizationResponse adds the authorization response params
+// (code, state, iss) to result.RedirectURI. Registered redirect_uris can
+// already carry their own query string (RFC 6749 §3.1.2 explicitly
+// allows this — the OIDF conformance suite's "matching callback
+// parameters" test registers one with ?dummy1=lorem&dummy2=ipsum and
+// requires it survive intact), so this must merge into any existing
+// query rather than always starting a fresh "?".
+func appendAuthorizationResponse(result issuance.AuthorizeResult, issuer string) (string, error) {
+	u, err := url.Parse(result.RedirectURI)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("code", result.Code)
+	if result.State != "" {
+		q.Set("state", result.State)
+	}
+	q.Set("iss", issuer)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
