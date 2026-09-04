@@ -325,6 +325,50 @@ paths:
       responses:
         "204":
           description: Acknowledged
+  /oid4vci/v1/status-list/{listID}:
+    get:
+      summary: Status List Token (draft-ietf-oauth-status-list-21)
+      description: >
+        Serves the signed Status List Token JWT that every issued
+        credential's `status.status_list.uri` claim points at. Only the
+        "pid" list exists — this issuer shares one global status list
+        across every credential it issues.
+      operationId: statusList
+      parameters:
+        - name: listID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The signed Status List Token
+          content:
+            application/statuslist+jwt:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oid4vci/v1/issuance/{id}/revoke:
+    post:
+      summary: Revoke an issued credential
+      description: >
+        Flips the issuance record's status-list entry to INVALID
+        (revoked). Only records with status credential_issued and an
+        existing status-list entry can be revoked; already-revoked
+        records return 204 idempotently.
+      operationId: revokeIssuance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Revoked (or already revoked)
+        "400":
+          $ref: "#/components/responses/OAuthError"
 
 components:
   parameters:

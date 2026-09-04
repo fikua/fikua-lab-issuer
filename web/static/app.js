@@ -284,13 +284,13 @@
     async function loadRecords() {
         const { page, size, sort, order } = recordsState;
         const body = document.getElementById('records-body');
-        body.innerHTML = '<tr><td colspan="5" class="empty-state">Loading...</td></tr>';
+        body.innerHTML = '<tr><td colspan="7" class="empty-state">Loading...</td></tr>';
 
         try {
             const data = await api('GET', `/oid4vci/v1/issuance?page=${page}&size=${size}&sort=${sort}&order=${order}`);
             renderRecords(data);
         } catch (err) {
-            body.innerHTML = `<tr><td colspan="5" class="empty-state">Error: ${esc(err.message)}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="7" class="empty-state">Error: ${esc(err.message)}</td></tr>`;
         }
     }
 
@@ -300,7 +300,7 @@
         const body = document.getElementById('records-body');
 
         if (records.length === 0) {
-            body.innerHTML = '<tr><td colspan="5" class="empty-state">No issuance records</td></tr>';
+            body.innerHTML = '<tr><td colspan="7" class="empty-state">No issuance records</td></tr>';
         } else {
             body.innerHTML = records.map(r => `
                 <tr data-record='${esc(JSON.stringify(r))}'>
@@ -308,7 +308,9 @@
                     <td>${esc(r.subject_name || '-')}</td>
                     <td class="cell-type"><span class="badge badge-format">${esc(formatConfigId(r.credential_type))}</span></td>
                     <td><span class="badge badge-${esc(r.status || 'pending')}">${esc(r.status || 'pending')}</span></td>
+                    <td>${r.credential_status ? `<span class="badge badge-${esc(r.credential_status)}">${esc(r.credential_status)}</span>` : '-'}</td>
                     <td>${esc(formatDate(r.created_at))}</td>
+                    <td>${r.credential_status === 'valid' ? `<button type="button" class="btn btn-sm btn-danger btn-revoke" data-id="${esc(r.id)}">Revoke</button>` : ''}</td>
                 </tr>`).join('');
 
             body.querySelectorAll('tr').forEach(row => {
@@ -317,6 +319,21 @@
                         const record = JSON.parse(row.dataset.record);
                         showRecordDetail(record);
                     } catch {}
+                });
+            });
+
+            body.querySelectorAll('.btn-revoke').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (!confirm('Revoke this credential? This cannot be undone.')) return;
+                    btn.disabled = true;
+                    try {
+                        await api('POST', `/oid4vci/v1/issuance/${btn.dataset.id}/revoke`);
+                        loadRecords();
+                    } catch (err) {
+                        alert('Revoke failed: ' + err.message);
+                        btn.disabled = false;
+                    }
                 });
             });
         }
@@ -378,6 +395,9 @@
         html += dialogRow('ID', record.id);
         html += dialogRow('Type', record.credential_type);
         html += dialogRowHtml('Status', `<span class="badge badge-${esc(record.status)}">${esc(record.status)}</span>`);
+        if (record.credential_status) {
+            html += dialogRowHtml('Credential', `<span class="badge badge-${esc(record.credential_status)}">${esc(record.credential_status)}</span>`);
+        }
         html += dialogRow('Subject', record.subject_name || '-');
         html += dialogRow('Source Type', record.source_type || '-');
         html += dialogRow('Source Ref', record.source_ref || '-');

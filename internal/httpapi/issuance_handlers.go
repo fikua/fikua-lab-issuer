@@ -62,6 +62,30 @@ func (h *Handler) triggerIssuance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// statusList serves the signed Status List Token JWT (IETF Token Status
+// List, draft-ietf-oauth-status-list-21 §8) for the {listID} path param —
+// only "pid" exists today.
+func (h *Handler) statusList(w http.ResponseWriter, r *http.Request) {
+	token, err := h.issuance.GetStatusListToken(r.PathValue("listID"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/statuslist+jwt")
+	w.Header().Set("Cache-Control", "max-age=60")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(token))
+}
+
+// revokeIssuance marks an issued credential's status list entry INVALID.
+func (h *Handler) revokeIssuance(w http.ResponseWriter, r *http.Request) {
+	if err := h.issuance.RevokeCredential(r.PathValue("id")); err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 	form, err := parseForm(r)
 	if err != nil {

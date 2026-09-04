@@ -153,6 +153,8 @@ main {
     color: var(--btn-accent-text); font-weight: 600;
 }
 .btn-accent:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-danger { background: var(--danger-subtle); border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: var(--btn-accent-text); }
 .btn-sm { font-size: 0.75rem; padding: 0.3rem 0.65rem; }
 .btn-icon {
     background: none; border: 1px solid var(--border); border-radius: var(--radius);
@@ -195,8 +197,12 @@ main {
 .badge-pending { background: var(--warning-subtle); color: var(--warning); }
 .badge-offer_created { background: var(--primary-subtle); color: var(--primary); }
 .badge-issued { background: var(--success-subtle); color: var(--success); }
+.badge-credential_issued { background: var(--success-subtle); color: var(--success); }
 .badge-failed { background: var(--danger-subtle); color: var(--danger); }
 .badge-draft { background: var(--primary-subtle); color: var(--primary); }
+.badge-valid { background: var(--success-subtle); color: var(--success); }
+.badge-revoked { background: var(--danger-subtle); color: var(--danger); }
+.badge-suspended { background: var(--warning-subtle); color: var(--warning); }
 
 /* --- Form --- */
 .issuance-form { display: flex; flex-direction: column; gap: 1rem; }

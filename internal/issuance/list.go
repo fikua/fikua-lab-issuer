@@ -14,6 +14,11 @@ type IssuanceRecordView struct {
 	UpdatedAt      string `json:"updated_at"`
 	SubjectName    string `json:"subject_name,omitempty"`
 	CredentialData string `json:"credential_data"`
+	// CredentialStatus is the IETF Token Status List value for this
+	// record's issued credential: "valid", "revoked", "suspended", or ""
+	// if the record has no status-list entry yet (still draft, or issued
+	// before revocation support existed).
+	CredentialStatus string `json:"credential_status,omitempty"`
 }
 
 // ListIssuanceRecordsResult is GET /oid4vci/v1/issuance's response body.
@@ -40,19 +45,39 @@ func (s *Service) ListIssuanceRecords(page, size int, sort, order string) ListIs
 	views := make([]IssuanceRecordView, 0, len(records))
 	for _, rec := range records {
 		views = append(views, IssuanceRecordView{
-			ID:             rec.ID,
-			CredentialType: rec.CredentialType,
-			Status:         rec.Status,
-			SourceType:     rec.SourceType,
-			SourceRef:      rec.SourceRef,
-			CreatedAt:      rec.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-			UpdatedAt:      rec.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-			SubjectName:    extractSubjectName(rec.CredentialData),
-			CredentialData: rec.CredentialData,
+			ID:               rec.ID,
+			CredentialType:   rec.CredentialType,
+			Status:           rec.Status,
+			SourceType:       rec.SourceType,
+			SourceRef:        rec.SourceRef,
+			CreatedAt:        rec.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+			UpdatedAt:        rec.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+			SubjectName:      extractSubjectName(rec.CredentialData),
+			CredentialData:   rec.CredentialData,
+			CredentialStatus: s.credentialStatusLabel(rec.ID),
 		})
 	}
 
 	return ListIssuanceRecordsResult{Records: views, Total: total, Page: page, Size: size}
+}
+
+// credentialStatusLabel maps a record's status-list entry (if any) to the
+// label the UI shows and gates its "Revoke" action on.
+func (s *Service) credentialStatusLabel(recordID string) string {
+	_, value, ok := s.statusList.FindByRecordID(recordID)
+	if !ok {
+		return ""
+	}
+	switch value {
+	case StatusValid:
+		return "valid"
+	case StatusInvalid:
+		return "revoked"
+	case StatusSuspended:
+		return "suspended"
+	default:
+		return ""
+	}
 }
 
 // extractSubjectName derives a display name from an issuance record's

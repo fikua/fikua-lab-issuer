@@ -134,3 +134,83 @@ func scanRecordRows(row rowScanner) (Record, error) {
 	rec.CreatedAt, rec.UpdatedAt = createdAt, updatedAt
 	return rec, err
 }
+
+// AllocateIdx implements StatusListStore: get-or-create inside a single
+// transaction, so a concurrent allocation for a different record can't
+// observe or clobber this one, and a retried call for the same record
+// always reuses its existing idx (enforced by
+// idx_status_list_entries_record, not just this lookup).
+func (s *PostgresStore) AllocateIdx(issuanceRecordID string) (int64, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var existing int64
+	err = tx.QueryRowContext(ctx, `SELECT idx FROM status_list_entries WHERE issuance_record_id = $1`, issuanceRecordID).Scan(&existing)
+	if err == nil {
+		return existing, tx.Commit()
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	var idx int64
+	if err := tx.QueryRowContext(ctx, `UPDATE status_list_seq SET next_idx = next_idx + 1 WHERE id = 1 RETURNING next_idx - 1`).Scan(&idx); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO status_list_entries (idx, issuance_record_id, status) VALUES ($1, $2, $3)`,
+		idx, issuanceRecordID, StatusValid,
+	); err != nil {
+		return 0, err
+	}
+	return idx, tx.Commit()
+}
+
+// SetStatus implements StatusListStore.
+func (s *PostgresStore) SetStatus(issuanceRecordID string, value uint8) (int64, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		`UPDATE status_list_entries SET status = $1, updated_at = now() WHERE issuance_record_id = $2 RETURNING idx`,
+		value, issuanceRecordID,
+	)
+	var idx int64
+	if err := row.Scan(&idx); err != nil {
+		return 0, false
+	}
+	return idx, true
+}
+
+// FindByRecordID implements StatusListStore.
+func (s *PostgresStore) FindByRecordID(issuanceRecordID string) (int64, uint8, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		`SELECT idx, status FROM status_list_entries WHERE issuance_record_id = $1`, issuanceRecordID)
+	var idx int64
+	var status uint8
+	if err := row.Scan(&idx, &status); err != nil {
+		return 0, 0, false
+	}
+	return idx, status, true
+}
+
+// AllEntries implements StatusListStore.
+func (s *PostgresStore) AllEntries() (map[int64]uint8, error) {
+	rows, err := s.db.QueryContext(context.Background(), `SELECT idx, status FROM status_list_entries`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64]uint8)
+	for rows.Next() {
+		var idx int64
+		var status uint8
+		if err := rows.Scan(&idx, &status); err != nil {
+			return nil, err
+		}
+		out[idx] = status
+	}
+	return out, rows.Err()
+}

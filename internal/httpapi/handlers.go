@@ -52,6 +52,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
 	mux.HandleFunc("POST /oid4vci/v1/notification", h.notification)
+	mux.HandleFunc("GET /oid4vci/v1/status-list/{listID}", h.statusList)
+	mux.HandleFunc("POST /oid4vci/v1/issuance/{id}/revoke", h.revokeIssuance)
 	mux.HandleFunc("GET /openapi.yaml", h.openAPISpecHandler)
 	mux.HandleFunc("GET /swagger", h.swaggerUI)
 }

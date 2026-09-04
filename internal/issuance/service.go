@@ -4,6 +4,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
@@ -13,7 +15,22 @@ import (
 	"github.com/fikua/fikua-lab-issuer/internal/oid4vci"
 	"github.com/fikua/fikua-lab-issuer/internal/sdjwt"
 	"github.com/fikua/fikua-lab-issuer/internal/session"
+	"github.com/fikua/fikua-lab-issuer/internal/statuslist"
 )
+
+// statusListID is the only Status List Token this issuer serves — a
+// single global list shared by every credential it issues (see
+// db/schema.sql's status_list_entries doc comment for why one list is
+// enough at this scale).
+const statusListID = "pid"
+
+// statusListCacheTTL bounds how often the status list token is rebuilt
+// and re-signed (which, when signing via the Fikua DSS, is a network
+// call) — independent of the token's own longer "ttl"/"exp" claims,
+// which tell relying parties how long *they* may cache it. A revoke
+// invalidates this cache immediately, so real staleness is bounded by
+// min(statusListCacheTTL, time since last revoke).
+const statusListCacheTTL = 60 * time.Second
 
 // PIDConfigID and PIDMdocConfigID are the only credential_configuration_ids
 // this issuer issues — Student ID is not carried over from the Java
@@ -42,8 +59,13 @@ type Service struct {
 	issuerKey    *fikuacrypto.SigningKey
 	sessions     *session.Store
 	issuances    RecordStore
+	statusList   StatusListStore
 	jtis         *oauth2.JTIStore
 	attestations *oauth2.ClientAttestationValidator
+
+	statusCacheMu    sync.Mutex
+	statusCacheToken string
+	statusCacheExp   time.Time
 }
 
 // NewService builds a Service. baseURL is this issuer's own Credential
@@ -54,12 +76,15 @@ type Service struct {
 // accept any self-consistent WIA (no chain-of-trust check), matching the
 // Java issuer's "no root-ca.crt configured" fallback. issuances is either
 // the in-memory Store (dev/no-Postgres fallback) or a PostgresStore.
-func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, walletProviderAnchor *x509.Certificate) *Service {
+// statusList is the same underlying store, typed as StatusListStore — see
+// cmd/issuer/main.go's wiring.
+func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, statusList StatusListStore, walletProviderAnchor *x509.Certificate) *Service {
 	return &Service{
 		baseURL:      baseURL,
 		issuerKey:    issuerKey,
 		sessions:     sessions,
 		issuances:    issuances,
+		statusList:   statusList,
 		jtis:         oauth2.NewJTIStore(),
 		attestations: oauth2.NewClientAttestationValidator(walletProviderAnchor),
 	}
@@ -308,11 +333,17 @@ func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Issuance record has no credential data. Provide credential_data when triggering issuance.")
 	}
 
+	statusIdx, err := s.statusList.AllocateIdx(issuanceRecordID)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to allocate status list index: "+err.Error())
+	}
+	statusURI := s.baseURL + "/oid4vci/v1/status-list/" + statusListID
+
 	var credential string
 	if req.CredentialConfigurationID == PIDMdocConfigID {
-		credential, err = s.buildMdocCredential(walletKey, rec)
+		credential, err = s.buildMdocCredential(walletKey, rec, statusIdx, statusURI)
 	} else {
-		credential, err = s.buildSDJWTCredential(walletKey, rec)
+		credential, err = s.buildSDJWTCredential(walletKey, rec, statusIdx, statusURI)
 	}
 	if err != nil {
 		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid credential request: "+err.Error())
@@ -365,7 +396,82 @@ func (s *Service) validateProofNonce(proofJWT string, sess session.Data) error {
 	return oauth2.BadRequest(oauth2.InvalidNonce, "Proof nonce does not match c_nonce")
 }
 
-func (s *Service) buildSDJWTCredential(walletKey jwk.Key, rec Record) (string, error) {
+// GetStatusListToken returns the signed Status List Token JWT for listID
+// (only statusListID exists today), rebuilding and re-signing it only
+// when the in-process cache has expired or been invalidated by a revoke
+// — see statusListCacheTTL.
+func (s *Service) GetStatusListToken(listID string) (string, error) {
+	if listID != statusListID {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Unknown status list: "+listID)
+	}
+
+	s.statusCacheMu.Lock()
+	defer s.statusCacheMu.Unlock()
+	if s.statusCacheToken != "" && time.Now().Before(s.statusCacheExp) {
+		return s.statusCacheToken, nil
+	}
+
+	entries, err := s.statusList.AllEntries()
+	if err != nil {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Failed to load status list entries: "+err.Error())
+	}
+	var size int64
+	for idx := range entries {
+		if idx+1 > size {
+			size = idx + 1
+		}
+	}
+
+	listURI := s.baseURL + "/oid4vci/v1/status-list/" + statusListID
+	token, err := statuslist.Build(entries, size, listURI, s.issuerKey)
+	if err != nil {
+		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Failed to build status list token: "+err.Error())
+	}
+
+	s.statusCacheToken = token
+	s.statusCacheExp = time.Now().Add(statusListCacheTTL)
+	return token, nil
+}
+
+// RevokeCredential marks issuanceRecordID's credential INVALID in the
+// status list. Idempotent: revoking an already-revoked credential is a
+// no-op success. Fails if the record doesn't exist, isn't actually
+// issued yet (draft), or was issued before this feature shipped (no
+// status-list entry — a known, accepted limitation, see
+// db/schema.sql's status_list_entries doc comment).
+func (s *Service) RevokeCredential(issuanceRecordID string) error {
+	rec, ok := s.issuances.FindByID(issuanceRecordID)
+	if !ok {
+		return oauth2.BadRequest(oauth2.InvalidRequest, "Unknown issuance record: "+issuanceRecordID)
+	}
+	if rec.Status != "credential_issued" {
+		return oauth2.BadRequest(oauth2.InvalidRequest, "Only an issued credential can be revoked (current status: "+rec.Status+")")
+	}
+
+	_, _, ok = s.statusList.FindByRecordID(issuanceRecordID)
+	if !ok {
+		return oauth2.BadRequest(oauth2.InvalidRequest, "This credential has no status list entry (issued before revocation support existed) and cannot be revoked")
+	}
+
+	if _, ok := s.statusList.SetStatus(issuanceRecordID, StatusInvalid); !ok {
+		return oauth2.BadRequest(oauth2.InvalidRequest, "Failed to revoke credential")
+	}
+
+	s.statusCacheMu.Lock()
+	s.statusCacheToken = ""
+	s.statusCacheMu.Unlock()
+	return nil
+}
+
+// statusClaim builds the IETF Token Status List "status" claim value
+// (draft-ietf-oauth-status-list-21 §6.2's {status_list: {idx, uri}}
+// shape), shared verbatim between the SD-JWT top-level claim and the
+// mdoc namespace element.
+func statusClaim(idx int64, uri string) map[string]any {
+	return map[string]any{"status_list": map[string]any{"idx": idx, "uri": uri}}
+}
+
+func (s *Service) buildSDJWTCredential(walletKey jwk.Key, rec Record, statusIdx int64, statusURI string) (string, error) {
 	var claims map[string]any
 	if err := json.Unmarshal([]byte(rec.CredentialData), &claims); err != nil {
 		return "", fmt.Errorf("parsing credential_data: %w", err)
@@ -383,11 +489,12 @@ func (s *Service) buildSDJWTCredential(walletKey jwk.Key, rec Record) (string, e
 	}
 	builder.PlainClaim("issuing_authority", "Fikua Lab")
 	builder.PlainClaim("issuing_country", "ES")
+	builder.PlainClaim("status", statusClaim(statusIdx, statusURI))
 
 	return builder.Build()
 }
 
-func (s *Service) buildMdocCredential(walletKey jwk.Key, rec Record) (string, error) {
+func (s *Service) buildMdocCredential(walletKey jwk.Key, rec Record, statusIdx int64, statusURI string) (string, error) {
 	var claims map[string]any
 	if err := json.Unmarshal([]byte(rec.CredentialData), &claims); err != nil {
 		return "", fmt.Errorf("parsing credential_data: %w", err)
@@ -404,6 +511,7 @@ func (s *Service) buildMdocCredential(walletKey jwk.Key, rec Record) (string, er
 	}
 	builder.Element("issuing_authority", "Fikua Lab")
 	builder.Element("issuing_country", "ES")
+	builder.MapElement("status", statusClaim(statusIdx, statusURI))
 
 	return builder.BuildBase64URL()
 }

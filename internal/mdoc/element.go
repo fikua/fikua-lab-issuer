@@ -7,6 +7,7 @@ import "github.com/fxamacker/cbor/v2"
 type element struct {
 	identifier string
 	value      string
+	mapValue   map[string]any
 	kind       elementKind
 }
 
@@ -25,6 +26,7 @@ type elementKind int
 const (
 	elementText elementKind = iota
 	elementFullDate
+	elementMap
 )
 
 // TextElement builds a plain tstr-valued element.
@@ -36,6 +38,13 @@ func TextElement(identifier, value string) element {
 // value formatted as "YYYY-MM-DD".
 func FullDateElement(identifier, value string) element {
 	return element{identifier: identifier, value: value, kind: elementFullDate}
+}
+
+// MapElement builds an element whose value is a CBOR map — used for the
+// IETF Token Status List "status" claim ({status_list: {idx, uri}}), which
+// unlike every other PID claim isn't a plain tstr.
+func MapElement(identifier string, value map[string]any) element {
+	return element{identifier: identifier, mapValue: value, kind: elementMap}
 }
 
 // birthDateIdentifier is the one field this issuer knows to encode as
@@ -64,6 +73,8 @@ func (e element) cborValue() any {
 	switch e.kind {
 	case elementFullDate:
 		return cbor.Tag{Number: 1004, Content: e.value}
+	case elementMap:
+		return e.mapValue
 	default:
 		return e.value
 	}

@@ -55,6 +55,13 @@ func (b *Builder) Element(identifier, value string) *Builder {
 	return b
 }
 
+// MapElement adds a claim whose value is a CBOR map rather than a tstr —
+// used for the "status" element (IETF Token Status List).
+func (b *Builder) MapElement(identifier string, value map[string]any) *Builder {
+	b.elements = append(b.elements, MapElement(identifier, value))
+	return b
+}
+
 // Build assembles and signs the mdoc, returning the IssuerSigned CBOR
 // bytes: {issuerAuth, nameSpaces}.
 func (b *Builder) Build() ([]byte, error) {

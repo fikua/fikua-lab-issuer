@@ -65,7 +65,7 @@ func main() {
 	}
 
 	sessions := session.NewStore()
-	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, walletProviderAnchor)
+	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, issuances.(issuance.StatusListStore), walletProviderAnchor)
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {

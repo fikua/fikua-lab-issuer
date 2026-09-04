@@ -32,11 +32,21 @@ type Store struct {
 	mu            sync.Mutex
 	records       map[string]Record
 	byIssuerState map[string]string // issuer_state -> record id
+
+	statusMu      sync.Mutex
+	statusNextIdx int64
+	statusByIdx   map[int64]uint8
+	statusByRecID map[string]int64
 }
 
 // NewStore builds an empty Store.
 func NewStore() *Store {
-	return &Store{records: make(map[string]Record), byIssuerState: make(map[string]string)}
+	return &Store{
+		records:       make(map[string]Record),
+		byIssuerState: make(map[string]string),
+		statusByIdx:   make(map[int64]uint8),
+		statusByRecID: make(map[string]int64),
+	}
 }
 
 // Create inserts a new Record, defaulting credentialData to "{}" if empty.
@@ -171,4 +181,52 @@ func (s *Store) mutate(id string, fn func(*Record)) {
 	fn(&rec)
 	rec.UpdatedAt = time.Now()
 	s.records[id] = rec
+}
+
+// AllocateIdx implements StatusListStore.
+func (s *Store) AllocateIdx(issuanceRecordID string) (int64, error) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if idx, ok := s.statusByRecID[issuanceRecordID]; ok {
+		return idx, nil
+	}
+	idx := s.statusNextIdx
+	s.statusNextIdx++
+	s.statusByIdx[idx] = StatusValid
+	s.statusByRecID[issuanceRecordID] = idx
+	return idx, nil
+}
+
+// SetStatus implements StatusListStore.
+func (s *Store) SetStatus(issuanceRecordID string, value uint8) (int64, bool) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	idx, ok := s.statusByRecID[issuanceRecordID]
+	if !ok {
+		return 0, false
+	}
+	s.statusByIdx[idx] = value
+	return idx, true
+}
+
+// FindByRecordID implements StatusListStore.
+func (s *Store) FindByRecordID(issuanceRecordID string) (int64, uint8, bool) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	idx, ok := s.statusByRecID[issuanceRecordID]
+	if !ok {
+		return 0, 0, false
+	}
+	return idx, s.statusByIdx[idx], true
+}
+
+// AllEntries implements StatusListStore.
+func (s *Store) AllEntries() (map[int64]uint8, error) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	out := make(map[int64]uint8, len(s.statusByIdx))
+	for idx, v := range s.statusByIdx {
+		out[idx] = v
+	}
+	return out, nil
 }
