@@ -178,11 +178,37 @@ type AuthorizeResult struct {
 	State       string
 }
 
+// defaultPIDCredentialData is the synthetic PID data used when
+// /authorize has no issuance record to bind to — see HandleAuthorize's
+// doc comment for why that happens and why this is the right fallback
+// for a lab/conformance-testing issuer. Matches the UI's own "Fill test
+// data" defaults (web/static/app.js's DEFAULT_DATA).
+var defaultPIDCredentialData = map[string]any{
+	"given_name":  "Max",
+	"family_name": "Mustermann",
+	"birth_date":  "1990-06-15",
+}
+
 // HandleAuthorize resolves a PAR request_uri into an authorization code,
 // bound to the issuance record referenced by the PAR params' issuer_state
 // (set by TriggerIssuance's offer). Only the client_id-bearing,
 // PAR-backed flow is implemented — this issuer has no client_id-less
 // wallet-initiated sub-flow.
+//
+// A real issuer would authenticate the end-user interactively at this
+// endpoint (per OID4VCI's authorization_code flow) and derive the
+// credential data from that identity check. This lab issuer has no such
+// identity provider — it normally relies on the issuance_record an
+// operator pre-creates via POST /oid4vci/v1/issuance (through the admin
+// UI or directly) as a stand-in for that step. But a spec-conformant
+// wallet/test client has no reason to know about that out-of-band step:
+// it may reuse a credential_offer's issuer_state for a second
+// authorization (e.g. a conformance test exercising two OAuth2 clients
+// against the same offer, or a completely fresh authorization request
+// with no offer/issuer_state at all). Either way, if no issuance record
+// can be resolved, one is created here with synthetic default data
+// instead of failing the flow — mirroring what an interactive
+// login step would have produced.
 func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 	if requestURI == "" {
 		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing request_uri")
@@ -196,11 +222,21 @@ func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
 		metadata["code_challenge"] = codeChallenge
 	}
+
+	var rec Record
+	var foundRecord bool
 	if issuerState := params["issuer_state"]; issuerState != "" {
-		if rec, ok := s.issuances.FindByIssuerState(issuerState); ok {
-			metadata["issuanceRecordId"] = rec.ID
-		}
+		rec, foundRecord = s.issuances.FindByIssuerState(issuerState)
 	}
+	if !foundRecord {
+		credentialDataJSON, err := json.Marshal(defaultPIDCredentialData)
+		if err != nil {
+			return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to build default credential data: "+err.Error())
+		}
+		rec = s.issuances.Create(PIDConfigID, string(credentialDataJSON), "conformance_test", "auto-created at /authorize (no issuer_state)")
+		s.issuances.UpdateStatus(rec.ID, "offer_created")
+	}
+	metadata["issuanceRecordId"] = rec.ID
 
 	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
 	code := s.sessions.CreateAuthCode(sess)
