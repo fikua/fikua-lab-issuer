@@ -73,31 +73,50 @@ jobs:
           echo "CF_ACCESS_CLIENT_ID=$CF_ACCESS_CLIENT_ID" >> "$GITHUB_ENV"
           echo "CF_ACCESS_CLIENT_SECRET=$CF_ACCESS_CLIENT_SECRET" >> "$GITHUB_ENV"
 
-      - name: Write .env on the VPS from environment secrets
+      - name: Write DSS secrets into .env on the VPS (merge, not overwrite)
         # The .env itself is never committed (see .env.example) and lives
-        # only on the VPS host — this step is the automated replacement
-        # for editing it there by hand. Values come from the "prd"
-        # environment's secrets (Settings -> Environments -> prd ->
-        # Environment secrets), so this step only ever runs after the
-        # same required-reviewer approval gate as the rest of this job.
-        # heredoc + a piped ssh command keeps the values out of both the
-        # shell's argv (visible via `ps`) and the workflow log.
+        # only on the VPS host. This step used to be a manual SSH edit —
+        # that's how FIKUA_DSS_* went missing in the first place, letting
+        # the issuer silently sign with an untrusted ephemeral key.
+        #
+        # It merges rather than replaces: FIKUA_ISSUER_POSTGRES_PASSWORD
+        # (and anything else already in .env) is left untouched, since
+        # Postgres only honors the password baked into its data volume at
+        # first init — overwriting it here without knowing that value
+        # would desync the two and break every DB connection. Only the
+        # FIKUA_DSS_* lines are replaced (old ones stripped first, so
+        # re-running this doesn't duplicate them) — those five keys are
+        # this workflow's actual concern.
+        #
+        # Values come from the "prd" environment's secrets (Settings ->
+        # Environments -> prd -> Environment secrets), so this only ever
+        # runs after the same required-reviewer approval gate as the rest
+        # of this job. The whole merge script travels inside the heredoc
+        # sent to bash over SSH — never as a shell argv (visible via `ps`)
+        # and never echoed into the workflow log.
         env:
-          FIKUA_ISSUER_POSTGRES_PASSWORD: ${{ secrets.FIKUA_ISSUER_POSTGRES_PASSWORD }}
           FIKUA_DSS_CLIENT_SECRET: ${{ secrets.FIKUA_DSS_CLIENT_SECRET }}
           FIKUA_DSS_CREDENTIAL_PASSWORD: ${{ secrets.FIKUA_DSS_CREDENTIAL_PASSWORD }}
         run: |
           set -e
           ssh vps.fikua.com 'sudo mkdir -p /opt/vps/projects/fikua-lab-issuer'
-          cat <<EOF | ssh vps.fikua.com 'sudo tee /opt/vps/projects/fikua-lab-issuer/.env > /dev/null && sudo chmod 600 /opt/vps/projects/fikua-lab-issuer/.env && sudo chown ubuntu:ubuntu /opt/vps/projects/fikua-lab-issuer/.env'
-          FIKUA_ISSUER_POSTGRES_USER=fikua
-          FIKUA_ISSUER_POSTGRES_PASSWORD=$FIKUA_ISSUER_POSTGRES_PASSWORD
-          FIKUA_DSS_URL=https://dss.fikua.com
-          FIKUA_DSS_CLIENT_ID=fikua-issuer
-          FIKUA_DSS_CLIENT_SECRET=$FIKUA_DSS_CLIENT_SECRET
-          FIKUA_DSS_CREDENTIAL_ID=fikua-credential-001
-          FIKUA_DSS_CREDENTIAL_PASSWORD=$FIKUA_DSS_CREDENTIAL_PASSWORD
-          EOF
+          ssh vps.fikua.com 'sudo bash -s' <<REMOTE_SCRIPT
+          set -e
+          ENV_FILE=/opt/vps/projects/fikua-lab-issuer/.env
+          touch "\$ENV_FILE"
+          grep -v '^FIKUA_DSS_' "\$ENV_FILE" > "\$ENV_FILE.tmp" || true
+          {
+            cat "\$ENV_FILE.tmp"
+            echo "FIKUA_DSS_URL=https://dss.fikua.com"
+            echo "FIKUA_DSS_CLIENT_ID=fikua-issuer"
+            echo "FIKUA_DSS_CLIENT_SECRET=$FIKUA_DSS_CLIENT_SECRET"
+            echo "FIKUA_DSS_CREDENTIAL_ID=fikua-credential-001"
+            echo "FIKUA_DSS_CREDENTIAL_PASSWORD=$FIKUA_DSS_CREDENTIAL_PASSWORD"
+          } > "\$ENV_FILE"
+          rm -f "\$ENV_FILE.tmp"
+          chmod 600 "\$ENV_FILE"
+          chown ubuntu:ubuntu "\$ENV_FILE"
+          REMOTE_SCRIPT
 
       - name: Copy compose.yaml from platform-iac source of truth
         # The compose file lives in fikua-platform-iac, but to keep this
