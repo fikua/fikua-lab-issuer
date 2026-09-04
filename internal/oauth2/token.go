@@ -8,6 +8,13 @@ type TokenRequest struct {
 	Code         string
 	RedirectURI  string
 	CodeVerifier string
+	// ClientID is the (optional) explicit client_id form parameter, per
+	// RFC 6749 §5.1 — this issuer authenticates the client via its
+	// attestation, not this parameter, but if present it must agree with
+	// the attested client_id (RFC 6749 §5.2: a token request identifying
+	// a client other than the one the attestation authenticates must be
+	// rejected).
+	ClientID string
 }
 
 // TokenRequestFromForm builds a TokenRequest from parsed form values.
@@ -17,6 +24,7 @@ func TokenRequestFromForm(form map[string]string) TokenRequest {
 		Code:         form["code"],
 		RedirectURI:  form["redirect_uri"],
 		CodeVerifier: form["code_verifier"],
+		ClientID:     form["client_id"],
 	}
 }
 

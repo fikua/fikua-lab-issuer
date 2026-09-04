@@ -373,6 +373,13 @@ paths:
                   type: string
                 code_verifier:
                   type: string
+                client_id:
+                  type: string
+                  description: >
+                    Optional (RFC 6749 §5.1) — this issuer authenticates
+                    the client via its attestation, not this parameter,
+                    but if present it must equal the attested client_id
+                    (RFC 6749 §5.2) or the request is rejected.
       responses:
         "200":
           description: Access token issued

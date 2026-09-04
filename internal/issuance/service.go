@@ -450,6 +450,14 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 	if clientID == "" {
 		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
 	}
+	// RFC 6749 §5.2: an explicit client_id form parameter naming a
+	// different client than the one this request's attestation
+	// authenticates must be rejected — this issuer doesn't use client_id
+	// for authentication, but a mismatch here means the caller is trying
+	// to claim an identity its attestation doesn't back.
+	if req.ClientID != "" && req.ClientID != clientID {
+		return oauth2.TokenResponse{}, oauth2.Unauthorized(oauth2.InvalidClient, "client_id does not match the attested client")
+	}
 
 	dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/token", "", s.jtis)
 	if err != nil {
