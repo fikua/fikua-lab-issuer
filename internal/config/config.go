@@ -23,14 +23,15 @@ type Config struct {
 	// decided to issue, not "whatever the registry happens to publish".
 	IssuableSchemes []string
 	// CertsDir holds issuer-cert.pem + issuer-key.pem for the signing key.
-	// If either is missing, an ephemeral CA-signed key is generated at
-	// startup instead (see internal/crypto.LoadOrGenerate). Ignored when
-	// DSSURL is set — remote signing takes over instead.
+	// If either is missing, the issuer fails to start (see
+	// internal/crypto.LoadFromPEM) — there is no ephemeral fallback.
+	// Ignored when DSSURL is set — remote signing takes over instead, and
+	// is what every real deployment should use.
 	CertsDir string
 	// DSSURL, if non-empty, switches this issuer to remote signing via a
 	// Fikua Digital Signature Service (CSC v2.0) instance at this base URL
 	// (e.g. "https://dss.fikua.com"), instead of the local
-	// CertsDir/ephemeral key. DSSClientID/DSSClientSecret authenticate as
+	// CertsDir/PEM key. DSSClientID/DSSClientSecret authenticate as
 	// one CSC tenant; DSSCredentialID/DSSCredentialPassword identify and
 	// authorize that tenant's signing credential.
 	DSSURL                string

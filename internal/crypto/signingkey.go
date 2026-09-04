@@ -1,7 +1,7 @@
-// Package crypto provides the issuer's EC P-256/ES256 signing key: loaded
-// from PEM files if present, or generated ephemerally (with a CA-signed
-// issuer certificate, per HAIP §6.1.1's non-self-signed x5c requirement) if
-// not.
+// Package crypto provides the issuer's EC P-256/ES256 signing key: either
+// remote, delegating to the Fikua DSS over CSC (the default for every
+// real deployment), or loaded from local PEM files — there is no
+// ephemeral fallback (see LoadFromPEM).
 package crypto
 
 import (

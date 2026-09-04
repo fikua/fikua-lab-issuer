@@ -41,10 +41,12 @@ Full OID4VCI/HAIP flow parity is implemented and verified end-to-end
 against a simulated wallet (PAR → authorize → token → nonce → credential,
 for both PID sd-jwt and mdoc). Issuance records persist to Postgres when
 `FIKUA_DB_URL` is set (falls back to an in-memory store otherwise — fine
-for local dev, not for a real deployment). Signing can be local (PEM/
-ephemeral, `internal/crypto.LoadOrGenerate`) or remote via a Fikua Digital
-Signature Service CSC v2.0 instance (`internal/cscclient`, when
-`FIKUA_DSS_URL` is set). What remains before a production cutover:
+for local dev, not for a real deployment). Signing can be local (PEM,
+`internal/crypto.LoadFromPEM` — no ephemeral fallback, the issuer refuses
+to start rather than sign with a throwaway CA nobody trusts) or remote via
+a Fikua Digital Signature Service CSC v2.0 instance (`internal/cscclient`,
+when `FIKUA_DSS_URL` is set — the default for every real deployment).
+What remains before a production cutover:
 pointing the real `issuer.fikua.com` hostname/DNS at this service instead
 of the Java issuer.
 

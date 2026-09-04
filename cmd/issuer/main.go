@@ -83,11 +83,13 @@ func main() {
 }
 
 // loadSigningKey builds the issuer's signing key: remotely via the Fikua
-// DSS's CSC API when cfg.DSSURL is set, or from cfg.CertsDir/an ephemeral
-// key otherwise (see fikuacrypto.LoadOrGenerate).
+// DSS's CSC API when cfg.DSSURL is set (the default for every real
+// deployment), or from PEM files at cfg.CertsDir otherwise. There is no
+// ephemeral fallback — see fikuacrypto.LoadFromPEM's doc comment for why
+// failing loudly here beats signing with a throwaway CA nobody trusts.
 func loadSigningKey(cfg config.Config) (*fikuacrypto.SigningKey, error) {
 	if cfg.DSSURL == "" {
-		return fikuacrypto.LoadOrGenerate(cfg.CertsDir)
+		return fikuacrypto.LoadFromPEM(cfg.CertsDir)
 	}
 
 	log.Printf("signing via Fikua DSS at %s (credential=%s)", cfg.DSSURL, cfg.DSSCredentialID)
