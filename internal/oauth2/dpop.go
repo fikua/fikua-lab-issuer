@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -107,6 +108,12 @@ func ValidateDPoPProof(dpopHeader, htm, htu, ath string, jtis *JTIStore) (jwk.Ke
 	if !hasJWK {
 		return nil, BadRequest(InvalidRequest, "DPoP must contain jwk header")
 	}
+	// RFC 9449 §4.2: the jwk header conveys the wallet's *public* key —
+	// a "d" field (EC/OKP/RSA private exponent) means the proof leaked
+	// private key material and must be rejected outright.
+	if walletJWK.Has("d") {
+		return nil, BadRequest(InvalidRequest, "DPoP jwk header must not contain a private key")
+	}
 	alg, _ := headers.Algorithm()
 	if alg != jwa.ES256() {
 		return nil, BadRequest(InvalidRequest, "DPoP must use ES256")
@@ -124,7 +131,7 @@ func ValidateDPoPProof(dpopHeader, htm, htu, ath string, jtis *JTIStore) (jwk.Ke
 	}
 	var claimedHTU string
 	_ = token.Get("htu", &claimedHTU)
-	if claimedHTU != htu {
+	if !htuMatches(claimedHTU, htu) {
 		return nil, BadRequest(InvalidRequest, "DPoP htu mismatch")
 	}
 
@@ -168,6 +175,22 @@ func DPoPThumbprint(key jwk.Key) (string, error) {
 		return "", fmt.Errorf("oauth2: computing DPoP key thumbprint: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(thumbprint), nil
+}
+
+// htuMatches compares a DPoP proof's claimed htu against the expected
+// value per RFC 9449 §4.3 point 9: any query or fragment component on
+// either side must be ignored, only scheme+authority+path are compared.
+// Falls back to an exact string match if either side fails to parse as a
+// URL, so a malformed htu is still rejected rather than silently matched.
+func htuMatches(claimed, expected string) bool {
+	claimedURL, err1 := url.Parse(claimed)
+	expectedURL, err2 := url.Parse(expected)
+	if err1 != nil || err2 != nil {
+		return claimed == expected
+	}
+	claimedURL.RawQuery, claimedURL.Fragment = "", ""
+	expectedURL.RawQuery, expectedURL.Fragment = "", ""
+	return claimedURL.String() == expectedURL.String()
 }
 
 func equalFoldASCII(a, b string) bool {
