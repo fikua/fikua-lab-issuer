@@ -93,7 +93,11 @@ func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wiaHeader, popHeader := clientAttestationHeaders(r)
-	dpopHeader := r.Header.Get("DPoP")
+	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
 
 	requestURI, expiresIn, err := h.issuance.HandlePar(form, wiaHeader, popHeader, dpopHeader)
 	if err != nil {
@@ -216,13 +220,25 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := oauth2.TokenRequestFromForm(form)
+	// RFC 6749 §2.3.1: client_secret_basic sends client_id (and a
+	// secret this issuer doesn't use for authentication) via HTTP Basic
+	// auth on the Authorization header, not as a form parameter — a
+	// client authenticating this way had its client_id silently missed
+	// entirely, since only the form was ever consulted.
+	if basicClientID, _, ok := r.BasicAuth(); ok && req.ClientID == "" {
+		req.ClientID = basicClientID
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if !req.IsAuthorizationCode() {
 		writeOAuthError(w, oauth2.BadRequest(oauth2.UnsupportedGrantType, "Only the authorization_code grant is supported"))
 		return
 	}
 
-	dpopHeader := r.Header.Get("DPoP")
+	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
 	wiaHeader, popHeader := clientAttestationHeaders(r)
 
 	resp, err := h.issuance.HandleAuthCodeToken(req, dpopHeader, wiaHeader, popHeader)
@@ -236,7 +252,11 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) nonce(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	accessToken := extractAccessToken(r.Header.Get("Authorization"))
-	dpopHeader := r.Header.Get("DPoP")
+	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
 	nonce, err := h.issuance.GenerateNonce(accessToken, dpopHeader)
 	if err != nil {
 		writeOAuthError(w, err)
@@ -260,7 +280,11 @@ func (h *Handler) credential(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, oauth2.Unauthorized(oauth2.InvalidToken, "DPoP-bound tokens must use DPoP authorization scheme, not Bearer"))
 		return
 	}
-	dpopHeader := r.Header.Get("DPoP")
+	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

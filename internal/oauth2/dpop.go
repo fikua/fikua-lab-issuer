@@ -60,6 +60,25 @@ func (s *JTIStore) Accept(jti string) bool {
 	return true
 }
 
+// SingleDPoPHeader returns the request's one DPoP header value. RFC 9449
+// §7.1 requires "exactly one DPoP HTTP request header field"; net/http's
+// Header.Get silently returns only the first of several repeated headers,
+// which would let a request with two DPoP headers slip through unnoticed
+// instead of being rejected — so callers must use this instead of
+// r.Header.Get("DPoP") wherever a DPoP proof is accepted. An absent header
+// is not an error here (values is empty, err is nil) since not every
+// caller requires DPoP on every request; ValidateDPoPProof itself rejects
+// an empty proof.
+func SingleDPoPHeader(values []string) (string, error) {
+	if len(values) > 1 {
+		return "", BadRequest(InvalidRequest, "Multiple DPoP headers are not allowed")
+	}
+	if len(values) == 0 {
+		return "", nil
+	}
+	return values[0], nil
+}
+
 // ValidateDPoPProof validates a DPoP proof JWT per RFC 9449 §4.3, and
 // returns the wallet's public key from its `jwk` header. htm/htu are the
 // expected HTTP method/URL this proof must be bound to. ath, if non-empty,
