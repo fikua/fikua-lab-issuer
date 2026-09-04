@@ -28,14 +28,15 @@ type Data struct {
 
 // Store is the in-memory session store.
 type Store struct {
-	mu               sync.Mutex
-	parRequests      map[string]parRequestEntry
-	authCodes        map[string]Data
-	accessTokens     map[string]Data
-	nonces           map[string]struct{}
-	credentialOffers map[string]string
-	pendingAuth      map[string]map[string]string
-	identifyReplay   map[string]identifyReplayEntry
+	mu                 sync.Mutex
+	parRequests        map[string]parRequestEntry
+	authCodes          map[string]Data
+	accessTokens       map[string]Data
+	nonces             map[string]struct{}
+	credentialOffers   map[string]string
+	pendingAuth        map[string]map[string]string
+	identifyReplay     map[string]identifyReplayEntry
+	issuedTokensByCode map[string]string // authCode -> access token minted from it, kept past the code's own deletion
 }
 
 // parRequestEntry is a stored PAR request plus its creation time, so
@@ -64,13 +65,14 @@ type identifyReplayEntry struct {
 // NewStore builds an empty Store.
 func NewStore() *Store {
 	return &Store{
-		parRequests:      make(map[string]parRequestEntry),
-		authCodes:        make(map[string]Data),
-		accessTokens:     make(map[string]Data),
-		nonces:           make(map[string]struct{}),
-		credentialOffers: make(map[string]string),
-		pendingAuth:      make(map[string]map[string]string),
-		identifyReplay:   make(map[string]identifyReplayEntry),
+		parRequests:        make(map[string]parRequestEntry),
+		authCodes:          make(map[string]Data),
+		accessTokens:       make(map[string]Data),
+		nonces:             make(map[string]struct{}),
+		credentialOffers:   make(map[string]string),
+		pendingAuth:        make(map[string]map[string]string),
+		identifyReplay:     make(map[string]identifyReplayEntry),
+		issuedTokensByCode: make(map[string]string),
 	}
 }
 
@@ -136,31 +138,56 @@ func (s *Store) CreateAuthCode(data Data) string {
 }
 
 // ConsumeAuthCode atomically removes and returns the session bound to
-// code. ok is false if the code is unknown (already consumed, or never
-// issued), or if it has outlived authCodeTTL — an expired code is
-// deleted (not left to linger) but treated as never having existed,
-// exactly like an unknown one.
-func (s *Store) ConsumeAuthCode(code string) (data Data, ok bool) {
+// code. ok is false if the code is unknown, has already been consumed
+// once before, or has outlived authCodeTTL — an expired code is deleted
+// (not left to linger) but treated as never having existed, exactly
+// like an unknown one.
+//
+// reused reports specifically the "already consumed once before" case
+// (RFC 6749 §4.1.2: reuse of a code MUST be denied and the tokens it
+// issued SHOULD be revoked) — the caller uses this to find and revoke
+// any access token minted from code via RevokeTokensForCode, something
+// that's only possible because issuedTokensByCode outlives the code's
+// own deletion here.
+func (s *Store) ConsumeAuthCode(code string) (data Data, ok bool, reused bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, ok = s.authCodes[code]
 	if !ok {
-		return Data{}, false
+		_, wasIssued := s.issuedTokensByCode[code]
+		return Data{}, false, wasIssued
 	}
 	delete(s.authCodes, code)
 	if time.Since(data.CreatedAt) > authCodeTTL {
-		return Data{}, false
+		return Data{}, false, false
 	}
-	return data, true
+	return data, true, false
 }
 
-// CreateAccessToken stores session under a fresh access token.
-func (s *Store) CreateAccessToken(data Data) string {
+// CreateAccessToken stores session under a fresh access token, minted
+// from authCode — recorded so a later reuse of authCode
+// (ConsumeAuthCode's reused return) can find and revoke it via
+// RevokeTokensForCode.
+func (s *Store) CreateAccessToken(authCode string, data Data) string {
 	token := RandomToken(32)
 	s.mu.Lock()
 	s.accessTokens[token] = data
+	s.issuedTokensByCode[authCode] = token
 	s.mu.Unlock()
 	return token
+}
+
+// RevokeTokensForCode revokes the access token (if any) that was minted
+// from authCode — called when authCode is presented a second time.
+func (s *Store) RevokeTokensForCode(authCode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	token, ok := s.issuedTokensByCode[authCode]
+	if !ok {
+		return
+	}
+	delete(s.accessTokens, token)
+	delete(s.issuedTokensByCode, authCode)
 }
 
 // GetAccessTokenSession is a non-destructive lookup of the session bound to

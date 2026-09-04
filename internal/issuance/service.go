@@ -494,8 +494,14 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 	if req.Code == "" {
 		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing authorization code")
 	}
-	sess, ok := s.sessions.ConsumeAuthCode(req.Code)
+	sess, ok, reused := s.sessions.ConsumeAuthCode(req.Code)
 	if !ok {
+		if reused {
+			// RFC 6749 §4.1.2: a reused authorization code must be
+			// denied, and any access token it previously minted SHOULD
+			// be revoked.
+			s.sessions.RevokeTokensForCode(req.Code)
+		}
 		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid authorization code")
 	}
 
@@ -532,7 +538,7 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 	s.sessions.RegisterNonce(cNonce)
 
 	tokenSession := session.Data{SessionID: sess.SessionID, CNonce: cNonce, DPoPKey: dpopKey, Metadata: sess.Metadata}
-	accessToken := s.sessions.CreateAccessToken(tokenSession)
+	accessToken := s.sessions.CreateAccessToken(req.Code, tokenSession)
 
 	return oauth2.DPoPToken(accessToken), nil
 }
