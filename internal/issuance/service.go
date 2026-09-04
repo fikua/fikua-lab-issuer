@@ -86,7 +86,7 @@ func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *ses
 		issuances:    issuances,
 		statusList:   statusList,
 		jtis:         oauth2.NewJTIStore(),
-		attestations: oauth2.NewClientAttestationValidator(walletProviderAnchor),
+		attestations: oauth2.NewClientAttestationValidator(walletProviderAnchor, baseURL),
 	}
 }
 

@@ -4,9 +4,13 @@ package oauth2
 
 // Error codes, per OID4VCI 1.0 Final §8.3.1 and OAuth2 core.
 const (
-	InvalidRequest                 = "invalid_request"
-	InvalidGrant                   = "invalid_grant"
-	InvalidClient                  = "invalid_client"
+	InvalidRequest = "invalid_request"
+	InvalidGrant   = "invalid_grant"
+	InvalidClient  = "invalid_client"
+	// InvalidClientAttestation, per ATCA draft-07 §6.2, MAY be used
+	// alongside the more general invalid_client when a client
+	// attestation or its proof-of-possession fails verification.
+	InvalidClientAttestation       = "invalid_client_attestation"
 	UnsupportedGrantType           = "unsupported_grant_type"
 	InvalidToken                   = "invalid_token"
 	UnsupportedCredentialType      = "unsupported_credential_type"

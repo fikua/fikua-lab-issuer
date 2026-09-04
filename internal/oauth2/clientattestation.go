@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,12 +36,18 @@ type ClientAttestationValidator struct {
 	// or header jwk verifies its own signature), with no chain-of-trust
 	// check — same "no root CA configured" fallback as the Java issuer.
 	walletProviderAnchor *x509.Certificate
+	// expectedAudience is this authorization server's own identifier
+	// (baseURL). Per ATCA draft-07 §5.2, the PoP JWT's `aud` claim MUST
+	// equal it — a PoP minted for a different server must be rejected.
+	expectedAudience string
 }
 
 // NewClientAttestationValidator builds a validator, optionally pinned to
-// anchor (pass nil for no pinning).
-func NewClientAttestationValidator(anchor *x509.Certificate) *ClientAttestationValidator {
-	return &ClientAttestationValidator{walletProviderAnchor: anchor}
+// anchor (pass nil for no pinning). expectedAudience is this
+// authorization server's own identifier, checked against every PoP
+// JWT's `aud` claim.
+func NewClientAttestationValidator(anchor *x509.Certificate, expectedAudience string) *ClientAttestationValidator {
+	return &ClientAttestationValidator{walletProviderAnchor: anchor, expectedAudience: expectedAudience}
 }
 
 // ValidateHeaders validates client attestation carried in the
@@ -131,6 +138,13 @@ func (v *ClientAttestationValidator) validateWiaAndPop(wiaJWTString, popJWTStrin
 	popToken, err := jwt.Parse([]byte(popJWTString), jwt.WithKey(jwa.ES256(), cnfKey), jwt.WithValidate(false))
 	if err != nil {
 		return "", Unauthorized(InvalidClient, "PoP signature verification failed")
+	}
+
+	if v.expectedAudience != "" {
+		aud, _ := popToken.Audience()
+		if !slices.Contains(aud, v.expectedAudience) {
+			return "", Unauthorized(InvalidClientAttestation, "PoP JWT aud does not match this authorization server")
+		}
 	}
 
 	if iat, hasIAT := popToken.IssuedAt(); hasIAT {
