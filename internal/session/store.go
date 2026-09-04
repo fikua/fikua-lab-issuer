@@ -92,9 +92,19 @@ func (s *Store) ConsumeParRequest(requestURI string) (params map[string]string, 
 	return params, ok
 }
 
+// authCodeTTL is how long an authorization code stays redeemable after
+// issuance (RFC 6749 §4.1.2 "SHOULD expire shortly", FAPI 2.0 Security
+// Profile §5.3.2.1-11's own conformance check expects a code presented
+// for the first time after this long to be rejected) — matches the
+// PAR request_uri's own advertised 60s lifetime for consistency.
+const authCodeTTL = 60 * time.Second
+
 // CreateAuthCode stores session under a fresh authorization code.
+// data.CreatedAt is stamped here (any caller-set value is overwritten)
+// so ConsumeAuthCode can enforce authCodeTTL.
 func (s *Store) CreateAuthCode(data Data) string {
 	code := RandomToken(32)
+	data.CreatedAt = time.Now()
 	s.mu.Lock()
 	s.authCodes[code] = data
 	s.mu.Unlock()
@@ -103,15 +113,21 @@ func (s *Store) CreateAuthCode(data Data) string {
 
 // ConsumeAuthCode atomically removes and returns the session bound to
 // code. ok is false if the code is unknown (already consumed, or never
-// issued).
+// issued), or if it has outlived authCodeTTL — an expired code is
+// deleted (not left to linger) but treated as never having existed,
+// exactly like an unknown one.
 func (s *Store) ConsumeAuthCode(code string) (data Data, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, ok = s.authCodes[code]
-	if ok {
-		delete(s.authCodes, code)
+	if !ok {
+		return Data{}, false
 	}
-	return data, ok
+	delete(s.authCodes, code)
+	if time.Since(data.CreatedAt) > authCodeTTL {
+		return Data{}, false
+	}
+	return data, true
 }
 
 // CreateAccessToken stores session under a fresh access token.
