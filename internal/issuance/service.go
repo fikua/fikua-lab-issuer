@@ -33,6 +33,11 @@ const statusListID = "pid"
 // min(statusListCacheTTL, time since last revoke).
 const statusListCacheTTL = 60 * time.Second
 
+// boundClientIDKey is the internal (non-spec) key used to carry the
+// attested client_id that made a PAR request through to the resulting
+// authorization code's session metadata — see HandlePar's doc comment.
+const boundClientIDKey = "_bound_client_id"
+
 // PIDConfigID and PIDMdocConfigID are the only credential_configuration_ids
 // this issuer issues — Student ID is not carried over from the Java
 // issuer (see the migration plan).
@@ -201,6 +206,15 @@ func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpop
 	if clientID == "" {
 		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
 	}
+	// Bound to the authorization code at /authorize time and re-checked
+	// against the /token endpoint's own client attestation in
+	// HandleAuthCodeToken (RFC 6749 §4.1.3: the token endpoint must
+	// reject a code presented by a client other than the one it was
+	// issued to). boundClientID isn't a real OAuth2 param — it's an
+	// internal key on the same params map that rides along through
+	// StoreParRequest/StorePendingAuth to CreateAuthCode's session
+	// metadata.
+	params[boundClientIDKey] = clientID
 
 	// FAPI 2.0 Security Profile §5.3.2.2-1: only the authorization_code
 	// flow (response_type=code) is permitted — code id_token and other
@@ -312,7 +326,7 @@ func (s *Service) HandleAuthorize(requestURI string) (AuthorizeResult, error) {
 		s.issuances.UpdateStatus(rec.ID, "offer_created")
 	}
 
-	metadata := map[string]any{"issuanceRecordId": rec.ID}
+	metadata := map[string]any{"issuanceRecordId": rec.ID, boundClientIDKey: params[boundClientIDKey]}
 	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
 		metadata["code_challenge"] = codeChallenge
 	}
@@ -368,7 +382,7 @@ func (s *Service) CompleteIdentification(sessionToken string, credentialData map
 	rec := s.issuances.Create(PIDConfigID, string(credentialDataJSON), sourceType, sourceRef)
 	s.issuances.UpdateStatus(rec.ID, "offer_created")
 
-	metadata := map[string]any{"issuanceRecordId": rec.ID}
+	metadata := map[string]any{"issuanceRecordId": rec.ID, boundClientIDKey: params[boundClientIDKey]}
 	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
 		metadata["code_challenge"] = codeChallenge
 	}
@@ -448,6 +462,13 @@ func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHe
 	sess, ok := s.sessions.ConsumeAuthCode(req.Code)
 	if !ok {
 		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid authorization code")
+	}
+
+	// Authorization code binding to client (RFC 6749 §4.1.3): the client
+	// presenting the code at /token must be the same one the PAR/authorize
+	// request came from — not merely any client with valid attestation.
+	if boundClientID, _ := sess.Metadata[boundClientIDKey].(string); boundClientID != "" && boundClientID != clientID {
+		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Authorization code was not issued to this client")
 	}
 
 	// DPoP-PAR binding (RFC 9449 §10.1): if a dpop_jkt was bound to this
