@@ -49,14 +49,27 @@ services:
       - default
       - traefik-public
     labels:
-      # Direct Cloudflare-proxied A record -> Traefik websecure (443),
-      # same pattern as fikua-lab-attestation-registry. Cert comes from
-      # the existing *.fikua.com wildcard already configured on the
-      # `cloudflare` certResolver — no new ACME request needed.
+      # DNS-only A record (not Cloudflare-proxied) -> Traefik websecure
+      # (443) directly. Was proxied until the OIDF conformance suite's
+      # FAPI 2.0 TLS checks (FAPI2-SP-FINAL-5.2.2) failed against
+      # Cloudflare's edge cipher suites — restricting those needs the
+      # paid Advanced Certificate Manager add-on, which this zone
+      # doesn't have (see fikua-platform-iac/tofu/cloudflare-fikua-com.tf
+      # and cloudflare-fikua-com-tls.tf). DNS-only makes Traefik
+      # negotiate TLS directly, which already enforces BCP195 cipher
+      # suites for free (see platform-services/traefik/dynamic/
+      # tls-options.yml).
+      #
+      # tls.certresolver is explicit here (unlike relying on the
+      # entryPoint's own wildcard domain, which never actually completed
+      # DNS-01 issuance — that gap was invisible while Cloudflare
+      # terminated TLS for this hostname, but surfaced as
+      # TRAEFIK DEFAULT CERT once traffic hit Traefik directly).
       traefik.enable: "true"
       traefik.http.routers.fikua-lab-issuer.rule: "Host(`issuer.fikua.com`)"
       traefik.http.routers.fikua-lab-issuer.entrypoints: "websecure"
       traefik.http.routers.fikua-lab-issuer.tls: "true"
+      traefik.http.routers.fikua-lab-issuer.tls.certresolver: "cloudflare"
       traefik.http.routers.fikua-lab-issuer.service: "fikua-lab-issuer"
       traefik.http.services.fikua-lab-issuer.loadbalancer.server.port: "8080"
       # Rate limit: mirrors attestation-registry's. sourcecriterion.requestheadername
