@@ -1,7 +1,10 @@
 // Package session holds ephemeral OID4VCI/OAuth2 protocol state: PAR
 // requests, authorization codes, access tokens, and nonces. In-memory
-// only, matching the Java issuer's InMemorySessionStore — no TTL/expiry,
-// relies on single-use consumption for codes/nonces.
+// only, matching the Java issuer's InMemorySessionStore. PAR requests and
+// authorization codes carry a short TTL (parRequestTTL, authCodeTTL — 60s
+// each) on top of single-use consumption, since a spec-conformant client
+// may present either after time has passed without ever using it once;
+// everything else here relies on single-use consumption alone.
 package session
 
 import (
@@ -26,7 +29,7 @@ type Data struct {
 // Store is the in-memory session store.
 type Store struct {
 	mu               sync.Mutex
-	parRequests      map[string]map[string]string
+	parRequests      map[string]parRequestEntry
 	authCodes        map[string]Data
 	accessTokens     map[string]Data
 	nonces           map[string]struct{}
@@ -34,6 +37,20 @@ type Store struct {
 	pendingAuth      map[string]map[string]string
 	identifyReplay   map[string]identifyReplayEntry
 }
+
+// parRequestEntry is a stored PAR request plus its creation time, so
+// ConsumeParRequest can enforce parRequestTTL (RFC 9126 §2.2: request_uri
+// values must be short-lived and single-use) — see authCodeTTL's doc
+// comment for the equivalent on authorization codes.
+type parRequestEntry struct {
+	Params    map[string]string
+	CreatedAt time.Time
+}
+
+// parRequestTTL matches the 60s expires_in this issuer already
+// advertises in the PAR response (HandlePar's return value) — enforcing
+// it here is what makes that number true rather than just advisory.
+const parRequestTTL = 60 * time.Second
 
 // identifyReplayEntry is a cached /identify/complete result plus its
 // expiry — the one place in this store with an actual TTL (everything
@@ -47,7 +64,7 @@ type identifyReplayEntry struct {
 // NewStore builds an empty Store.
 func NewStore() *Store {
 	return &Store{
-		parRequests:      make(map[string]map[string]string),
+		parRequests:      make(map[string]parRequestEntry),
 		authCodes:        make(map[string]Data),
 		accessTokens:     make(map[string]Data),
 		nonces:           make(map[string]struct{}),
@@ -72,23 +89,30 @@ func GenerateNonce() string {
 }
 
 // StoreParRequest stores a Pushed Authorization Request's form params
-// under requestUri.
+// under requestUri, stamped with the current time for parRequestTTL.
 func (s *Store) StoreParRequest(requestURI string, params map[string]string) {
 	s.mu.Lock()
-	s.parRequests[requestURI] = params
+	s.parRequests[requestURI] = parRequestEntry{Params: params, CreatedAt: time.Now()}
 	s.mu.Unlock()
 }
 
 // ConsumeParRequest atomically removes and returns the params stored
 // under requestURI. ok is false if unknown (already consumed, or never
-// stored).
+// stored), or if it has outlived parRequestTTL — an expired entry is
+// deleted (not left to linger) but treated as if it never existed, same
+// as an unknown one (RFC 9126 §2.2's single-use, short-lived request_uri).
 func (s *Store) ConsumeParRequest(requestURI string) (params map[string]string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	params, ok = s.parRequests[requestURI]
-	if ok {
-		delete(s.parRequests, requestURI)
+	entry, found := s.parRequests[requestURI]
+	if !found {
+		return nil, false
 	}
+	delete(s.parRequests, requestURI)
+	if time.Since(entry.CreatedAt) > parRequestTTL {
+		return nil, false
+	}
+	params, ok = entry.Params, true
 	return params, ok
 }
 
