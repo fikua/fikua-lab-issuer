@@ -364,9 +364,13 @@ paths:
       summary: Token endpoint — authorization_code grant, DPoP-bound
       description: >
         Client attestation and a valid DPoP proof (bound to POST
-        {issuer}/oid4vci/v1/token) are mandatory. The authorization code
-        is consumed before PKCE is verified — a failed PKCE check still
-        burns the code.
+        {issuer}/oid4vci/v1/token) are mandatory. Attestation may be
+        presented either via the OAuth-Client-Attestation/-PoP headers
+        or via the client_assertion_type/client_assertion form
+        parameters (ATCA draft-07 §3) — both transports are checked,
+        headers taking precedence. The authorization code is consumed
+        before PKCE is verified — a failed PKCE check still burns the
+        code.
       operationId: token
       parameters:
         - name: DPoP
@@ -397,6 +401,12 @@ paths:
                     the client via its attestation, not this parameter,
                     but if present it must equal the attested client_id
                     (RFC 6749 §5.2) or the request is rejected.
+                client_assertion_type:
+                  type: string
+                  description: Form-based client attestation transport (ATCA draft-07 §3).
+                client_assertion:
+                  type: string
+                  description: "\"<WIA>~<PoP>\" — see client_assertion_type."
       responses:
         "200":
           description: Access token issued

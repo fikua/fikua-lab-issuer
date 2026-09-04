@@ -15,16 +15,27 @@ type TokenRequest struct {
 	// a client other than the one the attestation authenticates must be
 	// rejected).
 	ClientID string
+	// ClientAssertionType/ClientAssertion carry a form-based client
+	// attestation (ATCA draft-07 §3), the token endpoint's counterpart
+	// to the OAuth-Client-Attestation/-PoP headers — the PAR endpoint
+	// already accepted both transports (HandlePar reads these same form
+	// keys), but the token endpoint only ever looked at headers, so a
+	// client authenticating here via form-encoded assertion instead of
+	// headers had its attestation silently ignored.
+	ClientAssertionType string
+	ClientAssertion     string
 }
 
 // TokenRequestFromForm builds a TokenRequest from parsed form values.
 func TokenRequestFromForm(form map[string]string) TokenRequest {
 	return TokenRequest{
-		GrantType:    form["grant_type"],
-		Code:         form["code"],
-		RedirectURI:  form["redirect_uri"],
-		CodeVerifier: form["code_verifier"],
-		ClientID:     form["client_id"],
+		GrantType:           form["grant_type"],
+		Code:                form["code"],
+		RedirectURI:         form["redirect_uri"],
+		CodeVerifier:        form["code_verifier"],
+		ClientID:            form["client_id"],
+		ClientAssertionType: form["client_assertion_type"],
+		ClientAssertion:     form["client_assertion"],
 	}
 }
 

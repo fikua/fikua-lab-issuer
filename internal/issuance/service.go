@@ -465,7 +465,12 @@ func (s *Service) RejectIdentification(sessionToken string) (redirect string, er
 // failure does not un-consume it, matching upstream), then PKCE S256 is
 // verified before minting a DPoP-bound access token.
 func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHeader, popHeader string) (oauth2.TokenResponse, error) {
-	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, "", "")
+	// Resolve tries the header transport first (wiaHeader/popHeader), then
+	// falls back to the request's own form-based assertion — mirroring
+	// HandlePar's same precedence, so a client authenticating via
+	// client_assertion/client_assertion_type at /token (instead of the
+	// OAuth-Client-Attestation headers) is no longer silently ignored.
+	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, req.ClientAssertionType, req.ClientAssertion)
 	if attErr != nil {
 		return oauth2.TokenResponse{}, attErr
 	}
