@@ -1,14 +1,15 @@
-// Package httpapi exposes the issuer's JSON API: OID4VCI/OAuth2 well-known
-// metadata, the HAIP authorization_code flow (PAR, authorize, token,
-// nonce, credential), and issuance triggering/listing. Credential
-// configurations are sourced from fikua-lab-attestation-registry via
-// internal/credentialconfig.
+// Package httpapi exposes the issuer's JSON API: OID4VCI Credential
+// Issuer metadata, the nonce and credential endpoints, and issuance
+// triggering/listing. Credential configurations are sourced from
+// fikua-lab-attestation-registry via internal/credentialconfig.
+//
+// The OAuth2 endpoints this used to serve (PAR, authorize, token, and the
+// identification flow behind them) moved to fikua-lab-idp; the metadata
+// document below now points wallets there via authorization_servers.
 package httpapi
 
 import (
-	_ "embed"
 	"encoding/json"
-	"html/template"
 	"net/http"
 
 	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
@@ -18,19 +19,13 @@ import (
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
 )
 
-//go:embed authorize_error.html
-var authorizeErrorHTML string
-
-// authorizeErrorTemplate renders authorize_error.html — a human-readable
-// error page for GET /oid4vci/v1/authorize failures, since a browser (not
-// a wallet backend) is the one rendering this response, unlike every
-// other OAuth2/OID4VCI endpoint here which is called machine-to-machine
-// and can stay plain JSON.
-var authorizeErrorTemplate = template.Must(template.New("authorize_error").Parse(authorizeErrorHTML))
-
 // Handler serves the issuer's JSON API.
 type Handler struct {
-	baseURL         string
+	baseURL string
+	// authServerURL is the authorization server (fikua-lab-idp) wallets
+	// are sent to for the authorization_code flow, advertised as this
+	// issuer's authorization_servers entry.
+	authServerURL   string
 	cache           *registryclient.Cache
 	issuableSchemes []string
 	issuerKey       *fikuacrypto.SigningKey
@@ -38,32 +33,31 @@ type Handler struct {
 	openAPISpec     []byte
 }
 
-// NewHandler builds an httpapi Handler. cache is the attestation-registry
-// scheme cache this issuer builds its credential configurations from;
-// issuableSchemes is the explicit allowlist of scheme ids to build
-// configurations for (the registry may define schemes this issuer isn't
-// meant to issue); issuerKey signs credentials and serves the JWK Set;
-// issuanceService implements the OID4VCI flows; openAPISpec is served at
-// /openapi.yaml and rendered by /swagger.
-func NewHandler(baseURL string, cache *registryclient.Cache, issuableSchemes []string, issuerKey *fikuacrypto.SigningKey, issuanceService *issuance.Service, openAPISpec []byte) *Handler {
-	return &Handler{baseURL: baseURL, cache: cache, issuableSchemes: issuableSchemes, issuerKey: issuerKey, issuance: issuanceService, openAPISpec: openAPISpec}
+// NewHandler builds an httpapi Handler. authServerURL is the
+// authorization server this issuer delegates the OAuth2 flow to; cache is
+// the attestation-registry scheme cache this issuer builds its credential
+// configurations from; issuableSchemes is the explicit allowlist of
+// scheme ids to build configurations for (the registry may define schemes
+// this issuer isn't meant to issue); issuerKey signs credentials and
+// serves the JWK Set; issuanceService implements the OID4VCI flows;
+// openAPISpec is served at /openapi.yaml and rendered by /swagger.
+func NewHandler(baseURL, authServerURL string, cache *registryclient.Cache, issuableSchemes []string, issuerKey *fikuacrypto.SigningKey, issuanceService *issuance.Service, openAPISpec []byte) *Handler {
+	return &Handler{baseURL: baseURL, authServerURL: authServerURL, cache: cache, issuableSchemes: issuableSchemes, issuerKey: issuerKey, issuance: issuanceService, openAPISpec: openAPISpec}
 }
 
 // Routes registers this handler's endpoints on mux.
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", h.credentialIssuerMetadata)
-	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.authServerMetadata)
 	mux.HandleFunc("GET /oid4vci/v1/jwks", h.jwks)
 	mux.HandleFunc("GET /oid4vci/v1/issuance", h.listIssuanceRecords)
 	mux.HandleFunc("POST /oid4vci/v1/issuance", h.triggerIssuance)
+	// Consumed by fikua-lab-idp at /authorize, to resolve a credential
+	// offer's issuer_state back to the record that produced it — the one
+	// lookup the authorization server cannot do on its own now that the
+	// record store lives only here.
+	mux.HandleFunc("GET /oid4vci/v1/issuance/by-issuer-state/{issuerState}", h.issuanceByIssuerState)
 	mux.HandleFunc("GET /oid4vci/v1/credential-offer/{id}", h.credentialOffer)
-	mux.HandleFunc("POST /oid4vci/v1/par", h.par)
-	mux.HandleFunc("GET /oid4vci/v1/authorize", h.authorize)
-	mux.HandleFunc("GET /oid4vci/v1/identify/claims", h.identifyClaims)
-	mux.HandleFunc("POST /oid4vci/v1/identify/complete", h.identifyComplete)
-	mux.HandleFunc("POST /oid4vci/v1/identify/reject", h.identifyReject)
-	mux.HandleFunc("POST /oid4vci/v1/token", h.token)
 	mux.HandleFunc("POST /oid4vci/v1/nonce", h.nonce)
 	mux.HandleFunc("POST /oid4vci/v1/credential", h.credential)
 	mux.HandleFunc("POST /oid4vci/v1/notification", h.notification)
@@ -92,12 +86,22 @@ func (h *Handler) credentialIssuerMetadata(w http.ResponseWriter, r *http.Reques
 			configs[id] = cfg
 		}
 	}
-	metadata := oid4vci.BuildCredentialIssuerMetadata(h.baseURL, configs)
+	metadata := oid4vci.BuildCredentialIssuerMetadata(h.baseURL, h.authServerURL, configs)
 	writeJSON(w, http.StatusOK, metadata)
 }
 
-func (h *Handler) authServerMetadata(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, oid4vci.BuildHAIPAuthServerMetadata(h.baseURL))
+// issuanceByIssuerState resolves a credential offer's issuer_state to the
+// issuance record it was created for. Called by fikua-lab-idp during
+// /authorize; 404 is an ordinary answer (a wallet may send a stale
+// issuer_state, or none at all), which is why it returns bare JSON rather
+// than an OAuth2 error body.
+func (h *Handler) issuanceByIssuerState(w http.ResponseWriter, r *http.Request) {
+	rec, ok := h.issuance.FindByIssuerState(r.PathValue("issuerState"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": rec.ID})
 }
 
 // credentialOffer resolves a by-reference credential_offer_uri (from

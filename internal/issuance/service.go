@@ -1,15 +1,15 @@
 package issuance
 
 import (
-	"crypto/x509"
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"sync"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
+	"github.com/fikua/fikua-lab-issuer/internal/accesstoken"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
 	"github.com/fikua/fikua-lab-issuer/internal/mdoc"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
@@ -33,11 +33,6 @@ const statusListID = "pid"
 // min(statusListCacheTTL, time since last revoke).
 const statusListCacheTTL = 60 * time.Second
 
-// boundClientIDKey is the internal (non-spec) key used to carry the
-// attested client_id that made a PAR request through to the resulting
-// authorization code's session metadata — see HandlePar's doc comment.
-const boundClientIDKey = "_bound_client_id"
-
 // PIDConfigID and PIDMdocConfigID are the only credential_configuration_ids
 // this issuer issues — Student ID is not carried over from the Java
 // issuer (see the migration plan).
@@ -52,23 +47,24 @@ const (
 	pidSubjectPrefix = "urn:fikua:pid:"
 )
 
-// requestURIPrefix is the PAR request_uri format prefix, per RFC 9126.
-const requestURIPrefix = "urn:ietf:params:oauth:request_uri:"
-
-// Service implements this issuer's OID4VCI flow: HAIP only —
-// authorization_code grant via PAR, with DPoP sender-constraining and
-// ATCA client attestation mandatory throughout, and PKCE (S256)
-// mandatory at the token endpoint. There is no plain/pre-authorized_code
-// profile — this issuer does not implement one.
+// Service implements this issuer's OID4VCI credential issuance: the
+// nonce, credential and notification endpoints, plus issuance-record
+// management and the status list.
+//
+// The OAuth2 authorization server this used to embed — PAR, /authorize,
+// /token, and the end-user identification flow behind them — now lives in
+// fikua-lab-idp. This service is a resource server: it verifies the
+// access tokens that AS mints (see internal/accesstoken) rather than
+// issuing them, and holds no authorization state of its own beyond the
+// nonces its own Nonce Endpoint hands out.
 type Service struct {
-	baseURL         string
-	identifyBaseURL string
-	issuerKey       *fikuacrypto.SigningKey
-	sessions        *session.Store
-	issuances       RecordStore
-	statusList      StatusListStore
-	jtis            *oauth2.JTIStore
-	attestations    *oauth2.ClientAttestationValidator
+	baseURL    string
+	issuerKey  *fikuacrypto.SigningKey
+	sessions   *session.Store
+	issuances  RecordStore
+	statusList StatusListStore
+	jtis       *oauth2.JTIStore
+	tokens     *accesstoken.Verifier
 
 	statusCacheMu    sync.Mutex
 	statusCacheToken string
@@ -78,26 +74,20 @@ type Service struct {
 // NewService builds a Service. baseURL is this issuer's own Credential
 // Issuer identifier (e.g. "https://issuer.fikua.com"), used as both the
 // SD-JWT/mdoc `iss`/docType binding and the expected proof/DPoP JWT
-// `aud`/`htu`. walletProviderAnchor optionally pins client-attestation
-// (WIA) signature verification to a single trusted CA — pass nil to
-// accept any self-consistent WIA (no chain-of-trust check), matching the
-// Java issuer's "no root-ca.crt configured" fallback. issuances is either
-// the in-memory Store (dev/no-Postgres fallback) or a PostgresStore.
-// statusList is the same underlying store, typed as StatusListStore — see
-// cmd/issuer/main.go's wiring. identifyBaseURL, if non-empty, is where
-// HandleAuthorize redirects for real end-user identification instead of
-// synthesizing PID data — see IdentifyBaseURL's doc comment in
-// internal/config.
-func NewService(baseURL string, identifyBaseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, statusList StatusListStore, walletProviderAnchor *x509.Certificate) *Service {
+// `aud`/`htu`. tokens verifies the access tokens presented at the
+// protected endpoints, against the authorization server's published JWK
+// Set. issuances is either the in-memory Store (dev/no-Postgres fallback)
+// or a PostgresStore. statusList is the same underlying store, typed as
+// StatusListStore — see cmd/issuer/main.go's wiring.
+func NewService(baseURL string, issuerKey *fikuacrypto.SigningKey, sessions *session.Store, issuances RecordStore, statusList StatusListStore, tokens *accesstoken.Verifier) *Service {
 	return &Service{
-		baseURL:         baseURL,
-		identifyBaseURL: identifyBaseURL,
-		issuerKey:       issuerKey,
-		sessions:        sessions,
-		issuances:       issuances,
-		statusList:      statusList,
-		jtis:            oauth2.NewJTIStore(),
-		attestations:    oauth2.NewClientAttestationValidator(walletProviderAnchor, baseURL),
+		baseURL:    baseURL,
+		issuerKey:  issuerKey,
+		sessions:   sessions,
+		issuances:  issuances,
+		statusList: statusList,
+		jtis:       oauth2.NewJTIStore(),
+		tokens:     tokens,
 	}
 }
 
@@ -160,422 +150,54 @@ func (s *Service) GetCredentialOffer(id string) (string, bool) {
 	return s.sessions.GetCredentialOffer(id)
 }
 
-// BuildAuthorizationRedirect adds the authorization response params
-// (code, state, iss) to result.RedirectURI. Registered redirect_uris can
-// already carry their own query string (RFC 6749 §3.1.2 explicitly
-// allows this — the OIDF conformance suite's "matching callback
-// parameters" test registers one with ?dummy1=lorem&dummy2=ipsum and
-// requires it survive intact), so this must merge into any existing
-// query rather than always starting a fresh "?". Shared by the httpapi
-// layer's /authorize 302 and CompleteIdentification's JSON redirect
-// field — both produce the exact same URL shape.
-func BuildAuthorizationRedirect(result AuthorizeResult, issuer string) (string, error) {
-	u, err := url.Parse(result.RedirectURI)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set("code", result.Code)
-	if result.State != "" {
-		q.Set("state", result.State)
-	}
-	q.Set("iss", issuer)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+// FindByIssuerState resolves a credential offer's issuer_state to the
+// issuance record TriggerIssuance created it for. Exposed for the
+// authorization server, which needs this link at /authorize but has no
+// record store of its own.
+func (s *Service) FindByIssuerState(issuerState string) (Record, bool) {
+	return s.issuances.FindByIssuerState(issuerState)
 }
 
-// HandlePar implements the Pushed Authorization Request endpoint (RFC
-// 9126). Client attestation is mandatory; code_challenge_method, if
-// given, must be S256. Returns the request_uri and its (advertised, not
-// server-enforced — see the migration notes) 60s lifetime.
+// GenerateNonce implements the Nonce Endpoint (OID4VCI 1.0 §7). It stays
+// on the Credential Issuer rather than moving to the authorization server
+// with the rest of the OAuth2 endpoints: the spec defines it as a
+// Credential Issuer endpoint, unauthenticated, and the nonces it hands
+// out are bound to this issuer as the proof JWT's `aud`.
 //
-// DPoP-PAR binding (RFC 9449 §10.1): a client may bind the eventual
-// authorization code to a DPoP key either by sending a dpop_jkt form
-// parameter, or by attaching a DPoP proof to the PAR request itself
-// (in which case the proof's key thumbprint is treated as if it were
-// dpop_jkt). Both mechanisms must be supported, and if both are used at
-// once, the thumbprints must match — the resolved thumbprint, whichever
-// path it came from, is stored on the PAR params under "dpop_jkt" so
-// HandleAuthCodeToken can enforce it against the token endpoint's own
-// DPoP proof later.
-func (s *Service) HandlePar(params map[string]string, wiaHeader, popHeader, dpopHeader string) (requestURI string, expiresIn int, err error) {
-	// RFC 9126 §2.1: request_uri is the one authorization-endpoint
-	// parameter a pushed authorization request MUST NOT carry — it's
-	// what this endpoint produces, not something a client can push in.
-	if params["request_uri"] != "" {
-		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "request_uri must not be provided in a pushed authorization request")
-	}
-
-	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, params["client_assertion_type"], params["client_assertion"])
-	if attErr != nil {
-		return "", 0, attErr
-	}
-	if clientID == "" {
-		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
-	}
-	// Bound to the authorization code at /authorize time and re-checked
-	// against the /token endpoint's own client attestation in
-	// HandleAuthCodeToken (RFC 6749 §4.1.3: the token endpoint must
-	// reject a code presented by a client other than the one it was
-	// issued to). boundClientID isn't a real OAuth2 param — it's an
-	// internal key on the same params map that rides along through
-	// StoreParRequest/StorePendingAuth to CreateAuthCode's session
-	// metadata.
-	params[boundClientIDKey] = clientID
-
-	// FAPI 2.0 Security Profile §5.3.2.2-1: only the authorization_code
-	// flow (response_type=code) is permitted — code id_token and other
-	// hybrid/implicit response types would return an id_token via the
-	// browser, where it can leak.
-	if responseType, ok := params["response_type"]; ok && responseType != "code" {
-		return "", 0, oauth2.BadRequest(oauth2.UnsupportedResponseType, "Only response_type=code is supported")
-	}
-
-	// FAPI 2.0 Security Profile §5.3.2.2-5 / RFC 7636: PKCE is mandatory,
-	// not merely validated when present.
-	if params["code_challenge"] == "" {
-		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "code_challenge is required")
-	}
-	if method := params["code_challenge_method"]; method != "S256" {
-		return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Only S256 code_challenge_method is supported")
-	}
-
-	if dpopHeader != "" {
-		dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/par", "", s.jtis)
-		if err != nil {
-			return "", 0, err
-		}
-		thumbprint, err := oauth2.DPoPThumbprint(dpopKey)
-		if err != nil {
-			return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to compute DPoP thumbprint: "+err.Error())
-		}
-		if declared := params["dpop_jkt"]; declared != "" && declared != thumbprint {
-			return "", 0, oauth2.BadRequest(oauth2.InvalidRequest, "dpop_jkt does not match the DPoP proof's key")
-		}
-		params["dpop_jkt"] = thumbprint
-	}
-
-	requestURI = requestURIPrefix + session.RandomToken(16)
-	s.sessions.StoreParRequest(requestURI, params)
-	return requestURI, 60, nil
-}
-
-// AuthorizeResult is the outcome of GET /oid4vci/v1/authorize. Exactly
-// one of two shapes applies: IdentifyRedirect non-empty means "302 the
-// browser here instead, ignore the rest" (deferring to the end-user
-// identification flow); otherwise Code/RedirectURI/State carry the
-// completed OAuth2 authorization response.
-type AuthorizeResult struct {
-	Code             string
-	RedirectURI      string
-	State            string
-	IdentifyRedirect string
-}
-
-// defaultPIDCredentialData is the synthetic PID data used when
-// /authorize has no issuance record to bind to — see HandleAuthorize's
-// doc comment for why that happens and why this is the right fallback
-// for a lab/conformance-testing issuer. Matches the UI's own "Fill test
-// data" defaults (web/static/app.js's DEFAULT_DATA).
-var defaultPIDCredentialData = map[string]any{
-	"given_name":  "Max",
-	"family_name": "Mustermann",
-	"birth_date":  "1990-06-15",
-}
-
-// HandleAuthorize resolves a PAR request_uri into an authorization code,
-// bound to the issuance record referenced by the PAR params' issuer_state
-// (set by TriggerIssuance's offer). Only the client_id-bearing,
-// PAR-backed flow is implemented — this issuer has no client_id-less
-// wallet-initiated sub-flow.
-//
-// A real issuer would authenticate the end-user interactively at this
-// endpoint (per OID4VCI's authorization_code flow) and derive the
-// credential data from that identity check. When no issuer_state
-// resolves an existing issuance record, this now has two possible
-// behaviors:
-//
-//   - identifyBaseURL configured: defer to the real end-user
-//     identification flow (see ResolveIdentifyScope/CompleteIdentification)
-//     by minting a pending-authorization token and returning
-//     AuthorizeResult.IdentifyRedirect — the httpapi layer 302s the
-//     browser there instead of completing the OAuth2 response here.
-//   - identifyBaseURL unset (the default): fall back to synthesizing PID
-//     data, exactly as before. Kept specifically because the OIDF
-//     conformance suite's automated client cannot complete an
-//     interactive identification form — see defaultPIDCredentialData.
-//
-// A spec-conformant wallet/test client has no reason to know about
-// issuer_state as an out-of-band mechanism at all: it may reuse a
-// credential_offer's issuer_state for a second authorization (e.g. a
-// conformance test exercising two OAuth2 clients against the same
-// offer), or send a completely fresh authorization request with no
-// issuer_state. Either case hits the same two-way branch above.
-//
-// queryClientID, if non-empty, is the client_id query parameter this
-// GET request itself carried (distinct from the PAR-time client_id that
-// minted requestURI). PAR §2.2 requires a request_uri be bound to the
-// client that pushed it — RFC 9126's PAR-3-3 conformance check catches
-// exactly this: presenting client A's request_uri while claiming to be
-// client B.
-func (s *Service) HandleAuthorize(requestURI, queryClientID string) (AuthorizeResult, error) {
-	if requestURI == "" {
-		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Missing request_uri")
-	}
-	params, ok := s.sessions.ConsumeParRequest(requestURI)
-	if !ok {
-		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired request_uri")
-	}
-	if queryClientID != "" && params["client_id"] != "" && queryClientID != params["client_id"] {
-		return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "request_uri is bound to a different client")
-	}
-
-	var rec Record
-	var foundRecord bool
-	if issuerState := params["issuer_state"]; issuerState != "" {
-		rec, foundRecord = s.issuances.FindByIssuerState(issuerState)
-	}
-	if !foundRecord && s.identifyBaseURL != "" {
-		token := s.sessions.StorePendingAuth(params)
-		return AuthorizeResult{IdentifyRedirect: s.identifyBaseURL + "?session=" + token}, nil
-	}
-	if !foundRecord {
-		credentialDataJSON, err := json.Marshal(defaultPIDCredentialData)
-		if err != nil {
-			return AuthorizeResult{}, oauth2.BadRequest(oauth2.InvalidRequest, "Failed to build default credential data: "+err.Error())
-		}
-		rec = s.issuances.Create(PIDConfigID, string(credentialDataJSON), "conformance_test", "auto-created at /authorize (no issuer_state)")
-		s.issuances.UpdateStatus(rec.ID, "offer_created")
-	}
-
-	metadata := map[string]any{"issuanceRecordId": rec.ID, boundClientIDKey: params[boundClientIDKey]}
-	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
-		metadata["code_challenge"] = codeChallenge
-	}
-	if dpopJKT := params["dpop_jkt"]; dpopJKT != "" {
-		metadata["dpop_jkt"] = dpopJKT
-	}
-
-	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
-	code := s.sessions.CreateAuthCode(sess)
-
-	return AuthorizeResult{Code: code, RedirectURI: params["redirect_uri"], State: params["state"]}, nil
-}
-
-// ResolveIdentifyScope is a non-destructive lookup for GET
-// /identify/claims: given a pending-authorization session token (minted
-// by HandleAuthorize's identify-redirect branch), returns the
-// credential_configuration_id the identification form should collect
-// claims for. This issuer only ever issues PID, so it's always
-// PIDConfigID today — kept as a method (not a constant) so a future
-// scope-to-config mapping has one place to live if this issuer ever
-// grows a second credential type reachable via wallet-initiated auth.
-func (s *Service) ResolveIdentifyScope(sessionToken string) (credentialConfigID string, err error) {
-	if _, ok := s.sessions.GetPendingAuth(sessionToken); !ok {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
-	}
-	return PIDConfigID, nil
-}
-
-// CompleteIdentification implements POST /identify/complete: it turns a
-// completed identification form into the same OAuth2 authorization
-// response HandleAuthorize's normal path produces, resuming the flow
-// that was deferred to the identify redirect.
-//
-// Replay-safe for identifyReplayTTL: a retried POST for the same
-// session (double form submit, flaky network) gets back the exact same
-// redirect instead of "invalid or expired session", since the
-// pending-authorization token itself is consumed destructively
-// (single-use) on the first successful call.
-func (s *Service) CompleteIdentification(sessionToken string, credentialData map[string]any, sourceType, sourceRef string) (redirect string, err error) {
-	if cached, ok := s.sessions.GetIdentifyReplay(sessionToken); ok {
-		return cached, nil
-	}
-
-	params, ok := s.sessions.ConsumePendingAuth(sessionToken)
-	if !ok {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
-	}
-
-	credentialDataJSON, err := json.Marshal(credentialData)
-	if err != nil {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid credential_data: "+err.Error())
-	}
-	rec := s.issuances.Create(PIDConfigID, string(credentialDataJSON), sourceType, sourceRef)
-	s.issuances.UpdateStatus(rec.ID, "offer_created")
-
-	metadata := map[string]any{"issuanceRecordId": rec.ID, boundClientIDKey: params[boundClientIDKey]}
-	if codeChallenge := params["code_challenge"]; codeChallenge != "" {
-		metadata["code_challenge"] = codeChallenge
-	}
-	if dpopJKT := params["dpop_jkt"]; dpopJKT != "" {
-		metadata["dpop_jkt"] = dpopJKT
-	}
-	sess := session.Data{SessionID: session.RandomToken(16), Metadata: metadata}
-	code := s.sessions.CreateAuthCode(sess)
-
-	result := AuthorizeResult{Code: code, RedirectURI: params["redirect_uri"], State: params["state"]}
-	redirect, err = BuildAuthorizationRedirect(result, s.baseURL)
-	if err != nil {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error())
-	}
-
-	s.sessions.StoreIdentifyReplay(sessionToken, redirect)
-	return redirect, nil
-}
-
-// RejectIdentification implements the user-cancels-authentication path:
-// per RFC 6749 §4.1.2.1, when the resource owner denies the request, the
-// authorization server redirects back to redirect_uri with
-// error=access_denied (never a JSON error body — the client is waiting
-// on a redirect, exactly like the success path). No issuance record is
-// created. Replay-safe the same way CompleteIdentification is, and
-// shares its replay cache — a session can be completed or rejected, but
-// not both, and either outcome replays identically on a retried POST.
-func (s *Service) RejectIdentification(sessionToken string) (redirect string, err error) {
-	if cached, ok := s.sessions.GetIdentifyReplay(sessionToken); ok {
-		return cached, nil
-	}
-
-	params, ok := s.sessions.ConsumePendingAuth(sessionToken)
-	if !ok {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid or expired identification session")
-	}
-
-	u, err := url.Parse(params["redirect_uri"])
-	if err != nil {
-		return "", oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error())
-	}
-	q := u.Query()
-	q.Set("error", "access_denied")
-	q.Set("error_description", "The end-user denied the authorization request")
-	if params["state"] != "" {
-		q.Set("state", params["state"])
-	}
-	u.RawQuery = q.Encode()
-	redirect = u.String()
-
-	s.sessions.StoreIdentifyReplay(sessionToken, redirect)
-	return redirect, nil
-}
-
-// HandleAuthCodeToken implements the authorization_code grant at the
-// token endpoint: client attestation and DPoP are validated, then the
-// authorization code is consumed (irrecoverably — a subsequent PKCE
-// failure does not un-consume it, matching upstream), then PKCE S256 is
-// verified before minting a DPoP-bound access token.
-func (s *Service) HandleAuthCodeToken(req oauth2.TokenRequest, dpopHeader, wiaHeader, popHeader string) (oauth2.TokenResponse, error) {
-	// Resolve tries the header transport first (wiaHeader/popHeader), then
-	// falls back to the request's own form-based assertion — mirroring
-	// HandlePar's same precedence, so a client authenticating via
-	// client_assertion/client_assertion_type at /token (instead of the
-	// OAuth-Client-Attestation headers) is no longer silently ignored.
-	clientID, attErr := s.attestations.Resolve(wiaHeader, popHeader, req.ClientAssertionType, req.ClientAssertion)
-	if attErr != nil {
-		return oauth2.TokenResponse{}, attErr
-	}
-	if clientID == "" {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "Client attestation is required")
-	}
-	// RFC 6749 §5.2: an explicit client_id form parameter naming a
-	// different client than the one this request's attestation
-	// authenticates must be rejected — this issuer doesn't use client_id
-	// for authentication, but a mismatch here means the caller is trying
-	// to claim an identity its attestation doesn't back.
-	if req.ClientID != "" && req.ClientID != clientID {
-		return oauth2.TokenResponse{}, oauth2.Unauthorized(oauth2.InvalidClient, "client_id does not match the attested client")
-	}
-
-	dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/token", "", s.jtis)
-	if err != nil {
-		return oauth2.TokenResponse{}, err
-	}
-
-	if req.Code == "" {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing authorization code")
-	}
-	sess, ok, reused := s.sessions.ConsumeAuthCode(req.Code)
-	if !ok {
-		if reused {
-			// RFC 6749 §4.1.2: a reused authorization code must be
-			// denied, and any access token it previously minted SHOULD
-			// be revoked.
-			s.sessions.RevokeTokensForCode(req.Code)
-		}
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Invalid authorization code")
-	}
-
-	// Authorization code binding to client (RFC 6749 §4.1.3): the client
-	// presenting the code at /token must be the same one the PAR/authorize
-	// request came from — not merely any client with valid attestation.
-	if boundClientID, _ := sess.Metadata[boundClientIDKey].(string); boundClientID != "" && boundClientID != clientID {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Authorization code was not issued to this client")
-	}
-
-	// DPoP-PAR binding (RFC 9449 §10.1): if a dpop_jkt was bound to this
-	// authorization at PAR time, the token endpoint's own DPoP proof must
-	// be for that exact key.
-	if boundJKT, _ := sess.Metadata["dpop_jkt"].(string); boundJKT != "" {
-		thumbprint, err := oauth2.DPoPThumbprint(dpopKey)
-		if err != nil || thumbprint != boundJKT {
-			return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "DPoP proof key does not match the one bound at the PAR endpoint")
-		}
-	}
-
-	// RFC 7636 §4.6: a missing code_verifier is a PKCE verification
-	// failure like any other, and must be reported the same way
-	// (invalid_grant) — not invalid_request, which the OIDF conformance
-	// suite (RFC6749-5.2/RFC7636-4.6) treats as a distinct, wrong error.
-	if req.CodeVerifier == "" {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "Missing code_verifier")
-	}
-	storedChallenge, _ := sess.Metadata["code_challenge"].(string)
-	if storedChallenge == "" || !oauth2.VerifyPKCES256(req.CodeVerifier, storedChallenge) {
-		return oauth2.TokenResponse{}, oauth2.BadRequest(oauth2.InvalidGrant, "PKCE verification failed")
-	}
-
-	cNonce := session.GenerateNonce()
-	s.sessions.RegisterNonce(cNonce)
-
-	tokenSession := session.Data{SessionID: sess.SessionID, CNonce: cNonce, DPoPKey: dpopKey, Metadata: sess.Metadata}
-	accessToken := s.sessions.CreateAccessToken(req.Code, tokenSession)
-
-	return oauth2.DPoPToken(accessToken), nil
-}
-
-// GenerateNonce implements the nonce endpoint. A fresh nonce is always
-// registered globally; if accessToken identifies a session, DPoP is
-// validated (mandatory whenever a session exists — this issuer does not
-// silently skip DPoP when the header is missing, unlike the Java
-// implementation it was ported from) and the session's cNonce is
-// updated.
-func (s *Service) GenerateNonce(accessToken, dpopHeader string) (string, error) {
+// A fresh nonce is always registered. If accessToken is present it is
+// verified and its DPoP binding enforced, so a caller cannot use this
+// endpoint to probe whether a token is valid without holding the matching
+// key — but a token is not required, since a wallet legitimately calls
+// this before it has one.
+func (s *Service) GenerateNonce(ctx context.Context, accessToken, dpopHeader string) (string, error) {
 	nonce := session.GenerateNonce()
 	s.sessions.RegisterNonce(nonce)
 
 	if accessToken != "" {
-		sess, ok := s.sessions.GetAccessTokenSession(accessToken)
-		if ok {
-			ath := oauth2.ComputeATH(accessToken)
-			dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/nonce", ath, s.jtis)
-			if err != nil {
-				return "", err
-			}
-			if err := requireMatchingThumbprint(sess.DPoPKey, dpopKey, "DPoP key mismatch at nonce endpoint"); err != nil {
-				return "", err
-			}
-			sess.CNonce = nonce
-			s.sessions.UpdateAccessTokenSession(accessToken, sess)
+		claims, err := s.tokens.Verify(ctx, accessToken)
+		if err != nil {
+			return "", err
+		}
+		ath := oauth2.ComputeATH(accessToken)
+		dpopKey, err := oauth2.ValidateDPoPProof(dpopHeader, "POST", s.baseURL+"/oid4vci/v1/nonce", ath, s.jtis)
+		if err != nil {
+			return "", err
+		}
+		if err := requireBoundThumbprint(claims.JKT, dpopKey, "DPoP key mismatch at nonce endpoint"); err != nil {
+			return "", err
 		}
 	}
 	return nonce, nil
 }
 
-// IssueCredential implements the credential endpoint.
-func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (oid4vci.CredentialResponse, error) {
-	sess, ok := s.sessions.GetAccessTokenSession(accessToken)
-	if !ok {
-		return oid4vci.CredentialResponse{}, oauth2.Unauthorized(oauth2.InvalidToken, "Invalid access token")
+// IssueCredential implements the credential endpoint. Everything it needs
+// about the authorization comes from the verified access token's claims —
+// there is no session to look up since the authorization server became a
+// separate service.
+func (s *Service) IssueCredential(ctx context.Context, accessToken, dpopHeader string, body []byte) (oid4vci.CredentialResponse, error) {
+	claims, err := s.tokens.Verify(ctx, accessToken)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 
 	ath := oauth2.ComputeATH(accessToken)
@@ -583,7 +205,7 @@ func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	if err := requireMatchingThumbprint(sess.DPoPKey, dpopKey, "DPoP key mismatch"); err != nil {
+	if err := requireBoundThumbprint(claims.JKT, dpopKey, "DPoP key mismatch"); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 
@@ -611,13 +233,13 @@ func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (
 		return oid4vci.CredentialResponse{}, err
 	}
 
-	if err := s.validateProofNonce(proofJWT, sess); err != nil {
+	if err := s.validateProofNonce(proofJWT, claims.CNonce); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 
-	issuanceRecordID, _ := sess.Metadata["issuanceRecordId"].(string)
+	issuanceRecordID := claims.IssuanceRecordID
 	if issuanceRecordID == "" {
-		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "No issuance record linked to this session. Use POST /oid4vci/v1/issuance to trigger credential issuance.")
+		return oid4vci.CredentialResponse{}, oauth2.BadRequest(oauth2.InvalidRequest, "No issuance record linked to this access token. Use POST /oid4vci/v1/issuance to trigger credential issuance.")
 	}
 	rec, ok := s.issuances.FindByID(issuanceRecordID)
 	if !ok || rec.CredentialData == "" || rec.CredentialData == "{}" {
@@ -641,39 +263,33 @@ func (s *Service) IssueCredential(accessToken, dpopHeader string, body []byte) (
 	}
 
 	s.issuances.UpdateStatus(issuanceRecordID, "credential_issued")
-	s.sessions.InvalidateNonce(sess.CNonce)
+	s.sessions.InvalidateNonce(claims.CNonce)
 
 	return oid4vci.SuccessResponse(credential), nil
 }
 
-// requireMatchingThumbprint enforces that dpopKey's RFC 7638 thumbprint
-// matches the one originally bound to the session at /token — the
-// pinning this issuer relies on to stop a stolen access token being used
-// with a different DPoP key. boundKey is nil if the session predates any
-// DPoP binding (shouldn't happen in this HAIP-only issuer, but guarded
-// defensively).
-func requireMatchingThumbprint(boundKey, presentedKey jwk.Key, mismatchMessage string) error {
-	if boundKey == nil {
-		return nil
-	}
-	expected, err := oauth2.DPoPThumbprint(boundKey)
-	if err != nil {
-		return oauth2.Unauthorized(oauth2.InvalidToken, "DPoP thumbprint verification failed")
-	}
+// requireBoundThumbprint enforces that the presented DPoP proof's key is
+// the one the access token was sender-constrained to (RFC 9449 §6.1's
+// cnf.jkt) — the pinning that stops a stolen access token being used with
+// a different key. boundJKT comes from the verified token's own claims
+// now, rather than from a session row shared with the token endpoint.
+func requireBoundThumbprint(boundJKT string, presentedKey jwk.Key, mismatchMessage string) error {
 	actual, err := oauth2.DPoPThumbprint(presentedKey)
 	if err != nil {
 		return oauth2.Unauthorized(oauth2.InvalidToken, "DPoP thumbprint verification failed")
 	}
-	if expected != actual {
+	if boundJKT != actual {
 		return oauth2.Unauthorized(oauth2.InvalidToken, mismatchMessage)
 	}
 	return nil
 }
 
-// validateProofNonce checks the proof JWT's nonce against either the
-// global single-use nonce store or, as a fallback, the token-endpoint
-// session's own cNonce — matching the Java issuer's two-source check.
-func (s *Service) validateProofNonce(proofJWT string, sess session.Data) error {
+// validateProofNonce checks the proof JWT's nonce against either this
+// issuer's own single-use nonce store (a nonce handed out by the Nonce
+// Endpoint) or the c_nonce the authorization server bound into the access
+// token — the two-source check that lets a wallet present its first proof
+// without a Nonce Endpoint round trip.
+func (s *Service) validateProofNonce(proofJWT, tokenCNonce string) error {
 	proofNonce, err := oid4vci.ProofNonce(proofJWT)
 	if err != nil || proofNonce == "" {
 		return oauth2.BadRequest(oauth2.InvalidNonce, "Proof nonce does not match c_nonce")
@@ -681,7 +297,7 @@ func (s *Service) validateProofNonce(proofJWT string, sess session.Data) error {
 	if s.sessions.ValidateNonce(proofNonce) {
 		return nil
 	}
-	if proofNonce == sess.CNonce {
+	if tokenCNonce != "" && proofNonce == tokenCNonce {
 		return nil
 	}
 	return oauth2.BadRequest(oauth2.InvalidNonce, "Proof nonce does not match c_nonce")

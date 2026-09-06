@@ -12,6 +12,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/fikua/fikua-lab-issuer/db"
+	"github.com/fikua/fikua-lab-issuer/internal/accesstoken"
 	"github.com/fikua/fikua-lab-issuer/internal/config"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
 	"github.com/fikua/fikua-lab-issuer/internal/cscclient"
@@ -51,27 +52,16 @@ func main() {
 	}
 	log.Printf("issuer signing key loaded (kid=%s)", issuerKey.KID())
 
-	walletProviderAnchor, err := fikuacrypto.LoadWalletProviderAnchor(cfg.CertsDir)
-	if err != nil {
-		log.Fatalf("loading wallet provider trust anchor: %v", err)
-	}
-	if walletProviderAnchor == nil {
-		log.Printf("warning: no root-ca.crt found in %s — accepting any self-consistent client attestation (no Wallet Provider trust pinning)", cfg.CertsDir)
-	}
-
 	issuances, err := loadIssuanceStore(cfg)
 	if err != nil {
 		log.Fatalf("setting up issuance store: %v", err)
 	}
 
-	if cfg.IdentifyBaseURL == "" {
-		log.Printf("warning: no FIKUA_IDENTIFY_BASE_URL configured — using synthetic PID fallback at /authorize (conformance-suite mode)")
-	} else {
-		log.Printf("end-user identification via %s", cfg.IdentifyBaseURL)
-	}
+	log.Printf("access tokens verified against the authorization server at %s", cfg.AuthServerURL)
+	tokens := accesstoken.New(cfg.AuthServerURL, cfg.BaseURL, cfg.AuthServerURL)
 
 	sessions := session.NewStore()
-	issuanceService := issuance.NewService(cfg.BaseURL, cfg.IdentifyBaseURL, issuerKey, sessions, issuances, issuances.(issuance.StatusListStore), walletProviderAnchor)
+	issuanceService := issuance.NewService(cfg.BaseURL, issuerKey, sessions, issuances, issuances.(issuance.StatusListStore), tokens)
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {
@@ -79,7 +69,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	httpapi.NewHandler(cfg.BaseURL, cache, cfg.IssuableSchemes, issuerKey, issuanceService, web.OpenAPISpec).Routes(mux)
+	httpapi.NewHandler(cfg.BaseURL, cfg.AuthServerURL, cache, cfg.IssuableSchemes, issuerKey, issuanceService, web.OpenAPISpec).Routes(mux)
 	webui.NewHandler(staticFS, cfg.BasePath).Routes(mux)
 
 	log.Printf("fikua-lab-issuer listening on %s (issuing %d/%d configured schemes; %d total in catalogue from %s)", cfg.Addr, foundSchemes, len(cfg.IssuableSchemes), len(cache.All()), cfg.AttestationRegistryURL)

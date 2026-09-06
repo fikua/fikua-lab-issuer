@@ -35,6 +35,13 @@ profile selection, no pre-authorized_code grant, and no
 `internal/profile` package — this was a deliberate simplification, not an
 oversight.
 
+**The authorization server lives elsewhere.** PAR, `/authorize`,
+`/token`, and the end-user identification flow behind them moved to
+[`fikua-lab-idp`](https://github.com/fikua/fikua-lab-idp). This service
+is now a resource server: it verifies the RFC 9068 JWT access tokens that
+AS mints (`internal/accesstoken`) rather than issuing them. Do not add
+OAuth2 endpoints back here.
+
 ## Status
 
 Full OID4VCI/HAIP flow parity is implemented and verified end-to-end
@@ -58,13 +65,14 @@ internal/config/           env var loading
 internal/registryclient/   HTTP client for fikua-lab-attestation-registry + cache/refresh
 internal/credentialconfig/ AttestationScheme -> OID4VCI credential_configurations_supported
 internal/oid4vci/          metadata, offer, request/response, proof validator
-internal/oauth2/           DPoP, client attestation (ATCA), PKCE, error model
-internal/crypto/           signing key abstraction (local EC P-256/ES256 or remote crypto.Signer), JWK, PEM loader, wallet-provider trust anchor
+internal/oauth2/           DPoP proof validation + error model (the AS half moved to fikua-lab-idp)
+internal/accesstoken/      verifies fikua-lab-idp's RFC 9068 JWT access tokens (cached JWKS + revocation denylist)
+internal/crypto/           signing key abstraction (local EC P-256/ES256 or remote crypto.Signer), JWK, PEM loader
 internal/cscclient/        Fikua DSS (CSC v2.0) client — remote signing backend for internal/crypto
 internal/sdjwt/            SD-JWT builder
 internal/mdoc/             mdoc builder (ISO 18013-5, CBOR)
-internal/issuance/         HAIP OID4VCI flow: PAR, authorize, authorization_code token, nonce, credential, issuance listing; Postgres or in-memory record store
-internal/session/          in-memory session store (PAR requests, auth codes, access tokens, nonces)
+internal/issuance/         OID4VCI issuance: nonce, credential, issuance listing/revocation; Postgres or in-memory record store
+internal/session/          in-memory nonce + credential-offer store
 internal/httpapi/          JSON API — /oid4vci/v1/*, well-known endpoints
 internal/webui/            serves the embedded static UI
 web/static/                UI assets (HTML/CSS/JS), embedded into the binary

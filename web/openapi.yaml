@@ -3,11 +3,15 @@ info:
   title: Fikua Lab Issuer
   description: >
     HAIP-only OID4VCI credential issuer for the Fikua Lab EUDI Wallet
-    ecosystem. Authorization_code via Pushed Authorization Requests (RFC
-    9126), DPoP sender-constraining (RFC 9449), ATCA draft-07 client
-    attestation, and PKCE S256 are mandatory on every request — there is
-    no profile selection and no pre-authorized_code grant. Issues EUDI
-    PID (SD-JWT VC and mdoc); Student ID is not supported.
+    ecosystem. Issues EUDI PID (SD-JWT VC and mdoc); Student ID is not
+    supported.
+
+    The OAuth2 authorization server is a separate service,
+    fikua-lab-idp — PAR, /authorize and /token are documented there, and
+    advertised here via authorization_servers in the Credential Issuer
+    Metadata. This service verifies the RFC 9068 JWT access tokens that
+    AS mints. DPoP sender-constraining (RFC 9449) remains mandatory on
+    every protected endpoint here.
   version: "0.1.0"
   license:
     name: Proprietary
@@ -41,17 +45,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CredentialIssuerMetadata"
-  /.well-known/oauth-authorization-server:
-    get:
-      summary: OAuth 2.0 Authorization Server Metadata (RFC 8414), HAIP profile
-      operationId: authServerMetadata
-      responses:
-        "200":
-          description: Authorization Server Metadata document
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthServerMetadata"
   /oid4vci/v1/jwks:
     get:
       summary: Issuer's public JWK Set
@@ -144,278 +137,35 @@ paths:
                 description: An OID4VCI Credential Offer (authorization_code grant, issuer_state set).
         "404":
           description: Unknown or already-expired offer id
-  /oid4vci/v1/par:
-    post:
-      summary: Pushed Authorization Request (RFC 9126)
-      description: >
-        Client attestation (ATCA draft-07, via the
-        OAuth-Client-Attestation / OAuth-Client-Attestation-PoP headers)
-        is mandatory. code_challenge_method, if present, must be S256.
-        DPoP-PAR binding (RFC 9449 §10.1) is supported via either the
-        dpop_jkt form parameter or a DPoP proof attached to this request
-        (or both, in which case they must agree) — whichever thumbprint
-        results is enforced again at the token endpoint. Per RFC 9126
-        §2.1, request_uri MUST NOT be provided here — it's this
-        endpoint's output, not an input. The resulting request_uri is
-        bound to the client_id that pushed it (RFC 9126 §2.2); a later
-        GET /authorize presenting it with a different client_id is
-        rejected.
-      operationId: par
-      parameters:
-        - $ref: "#/components/parameters/ClientAttestationHeader"
-        - $ref: "#/components/parameters/ClientAttestationPoPHeader"
-        - name: DPoP
-          in: header
-          description: >
-            Optional DPoP proof JWT (RFC 9449), bound to POST
-            {issuer}/oid4vci/v1/par. Its key thumbprint is treated as
-            dpop_jkt for this authorization.
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [code_challenge, code_challenge_method]
-              properties:
-                client_id:
-                  type: string
-                redirect_uri:
-                  type: string
-                response_type:
-                  type: string
-                  enum: [code]
-                  description: >
-                    Only "code" is supported — FAPI 2.0 Security Profile
-                    §5.3.2.2-1 forbids hybrid/implicit response types
-                    (e.g. "code id_token"), which would return an
-                    id_token via the browser.
-                code_challenge:
-                  type: string
-                  description: >
-                    Required — FAPI 2.0 Security Profile §5.3.2.2-5
-                    mandates PKCE, not merely validates it when present.
-                code_challenge_method:
-                  type: string
-                  enum: [S256]
-                issuer_state:
-                  type: string
-                state:
-                  type: string
-                dpop_jkt:
-                  type: string
-                  description: >
-                    RFC 7638 JWK thumbprint binding the eventual
-                    authorization code to a DPoP key, per RFC 9449 §10.
-                    Must match the DPoP header's key, if both are present.
-      responses:
-        "201":
-          description: Pushed authorization request accepted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  request_uri:
-                    type: string
-                    example: "urn:ietf:params:oauth:request_uri:abc123"
-                  expires_in:
-                    type: integer
-                    example: 60
-        "400":
-          $ref: "#/components/responses/OAuthError"
-  /oid4vci/v1/authorize:
+  /oid4vci/v1/issuance/by-issuer-state/{issuerState}:
     get:
-      summary: Resolve a PAR request_uri into an authorization code
-      operationId: authorize
-      parameters:
-        - name: request_uri
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: client_id
-          in: query
-          required: false
-          description: >
-            If present, must match the client_id the request_uri was
-            pushed with (RFC 9126 §2.2) — otherwise rejected.
-          schema:
-            type: string
-      responses:
-        "302":
-          description: >
-            Redirect to the client's redirect_uri with ?code=...&state=...&iss=..., or
-            (when no issuer_state resolves an issuance record and end-user
-            identification is configured) to the identification frontend.
-        "400":
-          $ref: "#/components/responses/OAuthError"
-  /oid4vci/v1/identify/claims:
-    get:
-      summary: Claims to collect for a pending identification session
+      summary: Resolve a credential offer's issuer_state to its issuance record
       description: >
-        Resolves a pending-authorization session token (minted by
-        /authorize's identify-redirect branch) to the
-        credential_configuration_id it's for, and returns the claims/display
-        metadata the identification frontend should render a form from —
-        the same registry-backed metadata .well-known/openid-credential-issuer
-        exposes.
-      operationId: identifyClaims
+        Called by fikua-lab-idp during /authorize, to link a wallet's
+        authorization request back to the record that triggered its
+        credential offer — the one lookup that authorization server
+        cannot do on its own, since the record store lives here. 404 is
+        an ordinary answer: a wallet may present a stale issuer_state or
+        none at all, and the AS then defers to end-user identification.
+      operationId: issuanceByIssuerState
       parameters:
-        - name: session
-          in: query
+        - name: issuerState
+          in: path
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Claims metadata for this session's credential
+          description: The issuance record this issuer_state points at
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  credential_configuration_id:
+                  id:
                     type: string
-                  claims:
-                    type: array
-                    items:
-                      type: object
-                  display:
-                    type: array
-                    items:
-                      type: object
-        "400":
-          $ref: "#/components/responses/OAuthError"
-  /oid4vci/v1/identify/complete:
-    post:
-      summary: Complete a pending identification session
-      description: >
-        Resumes the authorization_code flow /authorize deferred to
-        identification: creates an issuance record from the submitted
-        credential_data and mints a real authorization code, returning the
-        redirect URL the frontend should navigate to. Replay-safe for a
-        short window after the first successful call (same session token
-        returns the same redirect instead of erroring).
-      operationId: identifyComplete
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [session, credential_data]
-              properties:
-                session:
-                  type: string
-                credential_data:
-                  type: object
-                source_type:
-                  type: string
-                source_ref:
-                  type: string
-      responses:
-        "200":
-          description: Identification completed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  redirect:
-                    type: string
-        "400":
-          $ref: "#/components/responses/OAuthError"
-  /oid4vci/v1/identify/reject:
-    post:
-      summary: Reject a pending identification session
-      description: >
-        The user-cancels-authentication path (RFC 6749 §4.1.2.1): no
-        issuance record is created, and the returned redirect URL carries
-        error=access_denied instead of an authorization code. Replay-safe
-        the same way /identify/complete is.
-      operationId: identifyReject
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [session]
-              properties:
-                session:
-                  type: string
-      responses:
-        "200":
-          description: Identification rejected
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  redirect:
-                    type: string
-        "400":
-          $ref: "#/components/responses/OAuthError"
-  /oid4vci/v1/token:
-    post:
-      summary: Token endpoint — authorization_code grant, DPoP-bound
-      description: >
-        Client attestation and a valid DPoP proof (bound to POST
-        {issuer}/oid4vci/v1/token) are mandatory. Attestation may be
-        presented either via the OAuth-Client-Attestation/-PoP headers
-        or via the client_assertion_type/client_assertion form
-        parameters (ATCA draft-07 §3) — both transports are checked,
-        headers taking precedence. The authorization code is consumed
-        before PKCE is verified — a failed PKCE check still burns the
-        code.
-      operationId: token
-      parameters:
-        - name: DPoP
-          in: header
-          required: true
-          schema:
-            type: string
-        - $ref: "#/components/parameters/ClientAttestationHeader"
-        - $ref: "#/components/parameters/ClientAttestationPoPHeader"
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                grant_type:
-                  type: string
-                  enum: [authorization_code]
-                code:
-                  type: string
-                code_verifier:
-                  type: string
-                client_id:
-                  type: string
-                  description: >
-                    Optional (RFC 6749 §5.1) — this issuer authenticates
-                    the client via its attestation, not this parameter,
-                    but if present it must equal the attested client_id
-                    (RFC 6749 §5.2) or the request is rejected.
-                client_assertion_type:
-                  type: string
-                  description: Form-based client attestation transport (ATCA draft-07 §3).
-                client_assertion:
-                  type: string
-                  description: "\"<WIA>~<PoP>\" — see client_assertion_type."
-      responses:
-        "200":
-          description: Access token issued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TokenResponse"
-        "400":
-          $ref: "#/components/responses/OAuthError"
+        "404":
+          description: No issuance record matches this issuer_state
   /oid4vci/v1/nonce:
     post:
       summary: Nonce endpoint
@@ -423,7 +173,7 @@ paths:
         Always registers a fresh c_nonce. If an access token is
         presented, a valid DPoP proof (bound to POST
         {issuer}/oid4vci/v1/nonce, with ath) is mandatory and its key
-        must match the one bound to the session at /token.
+        must match the token's own cnf.jkt claim.
       operationId: nonce
       parameters:
         - name: Authorization
@@ -540,19 +290,6 @@ paths:
           $ref: "#/components/responses/OAuthError"
 
 components:
-  parameters:
-    ClientAttestationHeader:
-      name: OAuth-Client-Attestation
-      in: header
-      description: ATCA draft-07 Wallet Instance Attestation (WIA) JWT.
-      schema:
-        type: string
-    ClientAttestationPoPHeader:
-      name: OAuth-Client-Attestation-PoP
-      in: header
-      description: ATCA draft-07 WIA Proof-of-Possession JWT.
-      schema:
-        type: string
   responses:
     OAuthError:
       description: OAuth2/OID4VCI error response
@@ -570,10 +307,7 @@ components:
             - invalid_request
             - invalid_grant
             - invalid_client
-            - unsupported_grant_type
             - invalid_token
-            - unsupported_credential_type
-            - unsupported_credential_format
             - invalid_proof
             - invalid_nonce
             - unknown_credential_configuration
@@ -608,59 +342,6 @@ components:
                 type: string
               locale:
                 type: string
-    AuthServerMetadata:
-      type: object
-      properties:
-        issuer:
-          type: string
-        token_endpoint:
-          type: string
-        authorization_endpoint:
-          type: string
-        pushed_authorization_request_endpoint:
-          type: string
-        jwks_uri:
-          type: string
-        response_types_supported:
-          type: array
-          items:
-            type: string
-        grant_types_supported:
-          type: array
-          items:
-            type: string
-        code_challenge_methods_supported:
-          type: array
-          items:
-            type: string
-        token_endpoint_auth_methods_supported:
-          type: array
-          items:
-            type: string
-        dpop_signing_alg_values_supported:
-          type: array
-          items:
-            type: string
-        client_attestation_signing_alg_values_supported:
-          type: array
-          items:
-            type: string
-        client_attestation_pop_signing_alg_values_supported:
-          type: array
-          items:
-            type: string
-        require_pushed_authorization_requests:
-          type: boolean
-        token_endpoint_auth_signing_alg_values_supported:
-          type: array
-          items:
-            type: string
-        authorization_response_iss_parameter_supported:
-          type: boolean
-        subject_types_supported:
-          type: array
-          items:
-            type: string
     TriggerIssuanceRequest:
       type: object
       properties:
@@ -727,17 +408,6 @@ components:
         credential_data:
           type: string
           description: JSON-encoded credential data.
-    TokenResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-        token_type:
-          type: string
-          enum: [DPoP]
-        expires_in:
-          type: integer
-          example: 86400
     CredentialRequest:
       type: object
       properties:

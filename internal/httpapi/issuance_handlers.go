@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
 )
@@ -86,169 +85,6 @@ func (h *Handler) revokeIssuance(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) par(w http.ResponseWriter, r *http.Request) {
-	form, err := parseForm(r)
-	if err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid form body: "+err.Error()))
-		return
-	}
-	wiaHeader, popHeader := clientAttestationHeaders(r)
-	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-
-	requestURI, expiresIn, err := h.issuance.HandlePar(form, wiaHeader, popHeader, dpopHeader)
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"request_uri": requestURI, "expires_in": expiresIn})
-}
-
-func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
-	result, err := h.issuance.HandleAuthorize(r.URL.Query().Get("request_uri"), r.URL.Query().Get("client_id"))
-	if err != nil {
-		writeAuthorizeError(w, err)
-		return
-	}
-	if result.IdentifyRedirect != "" {
-		http.Redirect(w, r, result.IdentifyRedirect, http.StatusFound)
-		return
-	}
-	redirect, err := issuance.BuildAuthorizationRedirect(result, h.baseURL)
-	if err != nil {
-		writeAuthorizeError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid redirect_uri: "+err.Error()))
-		return
-	}
-	http.Redirect(w, r, redirect, http.StatusFound)
-}
-
-// identifyClaims implements GET /identify/claims: resolves which
-// credential_configuration_id a pending identification session is for,
-// then reuses the same registry-backed claims/display lookup
-// credentialIssuerMetadata already does — no claim metadata is
-// hardcoded here.
-func (h *Handler) identifyClaims(w http.ResponseWriter, r *http.Request) {
-	sessionToken := r.URL.Query().Get("session")
-	credentialConfigID, err := h.issuance.ResolveIdentifyScope(sessionToken)
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-
-	var claims []credentialconfig.Claim
-	var display []credentialconfig.Display
-	for _, schemeID := range h.issuableSchemes {
-		def, ok := h.cache.Get(schemeID)
-		if !ok {
-			continue
-		}
-		for id, cfg := range credentialconfig.Build(def) {
-			if id != credentialConfigID {
-				continue
-			}
-			claims = cfg.CredentialMetadata.Claims
-			display = cfg.CredentialMetadata.Display
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"credential_configuration_id": credentialConfigID,
-		"claims":                      claims,
-		"display":                     display,
-	})
-}
-
-// identifyCompleteRequest is POST /identify/complete's body — matches
-// fikua-lab-identify's app.js submitIdentification() exactly.
-type identifyCompleteRequest struct {
-	Session        string         `json:"session"`
-	CredentialData map[string]any `json:"credential_data"`
-	SourceType     string         `json:"source_type"`
-	SourceRef      string         `json:"source_ref"`
-}
-
-// identifyComplete implements POST /identify/complete: turns a
-// completed identification form into the OAuth2 authorization response
-// the deferred /authorize would have produced, and hands the frontend a
-// redirect URL to follow (it does not itself redirect — the frontend's
-// own JS drives window.location.href, per app.js).
-func (h *Handler) identifyComplete(w http.ResponseWriter, r *http.Request) {
-	var req identifyCompleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid request body: "+err.Error()))
-		return
-	}
-	redirect, err := h.issuance.CompleteIdentification(req.Session, req.CredentialData, req.SourceType, req.SourceRef)
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"redirect": redirect})
-}
-
-// identifyRejectRequest is POST /identify/reject's body.
-type identifyRejectRequest struct {
-	Session string `json:"session"`
-}
-
-// identifyReject implements the user-cancels-authentication path: the
-// frontend's "Cancel"/"Deny" action calls this instead of
-// /identify/complete, and gets back a redirect URL carrying
-// error=access_denied (RFC 6749 §4.1.2.1) instead of an authorization
-// code.
-func (h *Handler) identifyReject(w http.ResponseWriter, r *http.Request) {
-	var req identifyRejectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid request body: "+err.Error()))
-		return
-	}
-	redirect, err := h.issuance.RejectIdentification(req.Session)
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"redirect": redirect})
-}
-
-func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
-	form, err := parseForm(r)
-	if err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidRequest, "Invalid form body: "+err.Error()))
-		return
-	}
-	req := oauth2.TokenRequestFromForm(form)
-	// RFC 6749 §2.3.1: client_secret_basic sends client_id (and a
-	// secret this issuer doesn't use for authentication) via HTTP Basic
-	// auth on the Authorization header, not as a form parameter — a
-	// client authenticating this way had its client_id silently missed
-	// entirely, since only the form was ever consulted.
-	if basicClientID, _, ok := r.BasicAuth(); ok && req.ClientID == "" {
-		req.ClientID = basicClientID
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	if !req.IsAuthorizationCode() {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.UnsupportedGrantType, "Only the authorization_code grant is supported"))
-		return
-	}
-
-	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-	wiaHeader, popHeader := clientAttestationHeaders(r)
-
-	resp, err := h.issuance.HandleAuthCodeToken(req, dpopHeader, wiaHeader, popHeader)
-	if err != nil {
-		writeOAuthError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
 func (h *Handler) nonce(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	accessToken := extractAccessToken(r.Header.Get("Authorization"))
@@ -257,7 +93,7 @@ func (h *Handler) nonce(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, err)
 		return
 	}
-	nonce, err := h.issuance.GenerateNonce(accessToken, dpopHeader)
+	nonce, err := h.issuance.GenerateNonce(r.Context(), accessToken, dpopHeader)
 	if err != nil {
 		writeOAuthError(w, err)
 		return
@@ -291,35 +127,12 @@ func (h *Handler) credential(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidCredentialRequest, "Failed to read request body: "+err.Error()))
 		return
 	}
-	resp, issueErr := h.issuance.IssueCredential(accessToken, dpopHeader, body)
+	resp, issueErr := h.issuance.IssueCredential(r.Context(), accessToken, dpopHeader, body)
 	if issueErr != nil {
 		writeOAuthError(w, issueErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// parseForm parses a form-urlencoded request body into a plain map,
-// taking the first value per key and dropping empty-valued keys —
-// matching the Java issuer's parseFormParams.
-func parseForm(r *http.Request) (map[string]string, error) {
-	if err := r.ParseForm(); err != nil {
-		return nil, err
-	}
-	form := make(map[string]string, len(r.PostForm))
-	for k, values := range r.PostForm {
-		if len(values) > 0 && values[0] != "" {
-			form[k] = values[0]
-		}
-	}
-	return form, nil
-}
-
-// clientAttestationHeaders extracts the ATCA draft-07 WIA/PoP headers,
-// shared by /par and /token — the only two endpoints that accept
-// header-based client attestation.
-func clientAttestationHeaders(r *http.Request) (wia, pop string) {
-	return r.Header.Get(oauth2.HeaderClientAttestation), r.Header.Get(oauth2.HeaderClientAttestationPoP)
 }
 
 // extractAccessToken strips a case-insensitive "Bearer " or "DPoP " prefix
@@ -360,20 +173,4 @@ func writeOAuthError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSON(w, exc.HTTPStatus, exc.Err)
-}
-
-// writeAuthorizeError renders authorizeErrorTemplate instead of JSON —
-// GET /oid4vci/v1/authorize is loaded directly in a browser (redirected
-// there by a wallet), so a failure here should read as a page, not a raw
-// JSON error body.
-func writeAuthorizeError(w http.ResponseWriter, err error) {
-	status := http.StatusInternalServerError
-	oauthErr := oauth2.Error{Code: oauth2.InvalidRequest, Description: err.Error()}
-	if exc, ok := err.(*oauth2.Exception); ok {
-		status = exc.HTTPStatus
-		oauthErr = exc.Err
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_ = authorizeErrorTemplate.Execute(w, oauthErr)
 }

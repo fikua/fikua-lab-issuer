@@ -23,17 +23,23 @@ type Display struct {
 }
 
 // BuildCredentialIssuerMetadata assembles the Credential Issuer Metadata
-// document. credential_response_encryption and batch_credential_issuance
-// are deliberately omitted: this issuer does neither request/response
+// document. authServerURL is the separate authorization server
+// (fikua-lab-idp) that runs the authorization_code flow for this issuer —
+// it used to be this issuer's own baseURL, back when the AS was embedded
+// here; a wallet follows authorization_servers to discover PAR/authorize/
+// token, so pointing it anywhere else would strand the flow.
+//
+// credential_response_encryption and batch_credential_issuance are
+// deliberately omitted: this issuer does neither request/response
 // encryption nor batch issuance, and advertising either without
 // implementing it is worse than not advertising it — the OID4VCI 1.0
 // Final schema also rejects a declared batch_size of 1 (minimum is 2,
 // since a "batch" of one credential isn't a batch), which the Java
 // issuer this was ported from got wrong.
-func BuildCredentialIssuerMetadata(baseURL string, credentialConfigs map[string]any) CredentialIssuerMetadata {
+func BuildCredentialIssuerMetadata(baseURL, authServerURL string, credentialConfigs map[string]any) CredentialIssuerMetadata {
 	return CredentialIssuerMetadata{
 		CredentialIssuer:                  baseURL,
-		AuthorizationServers:              []string{baseURL},
+		AuthorizationServers:              []string{authServerURL},
 		CredentialEndpoint:                baseURL + "/oid4vci/v1/credential",
 		NonceEndpoint:                     baseURL + "/oid4vci/v1/nonce",
 		NotificationEndpoint:              baseURL + "/oid4vci/v1/notification",

@@ -84,9 +84,9 @@ jobs:
         # Postgres only honors the password baked into its data volume at
         # first init — overwriting it here without knowing that value
         # would desync the two and break every DB connection. Only the
-        # FIKUA_DSS_* and FIKUA_IDENTIFY_BASE_URL lines are replaced (old
+        # FIKUA_DSS_* and FIKUA_AUTH_SERVER_URL lines are replaced (old
         # ones stripped first, so re-running this doesn't duplicate them)
-        # — those are this workflow's actual concern. FIKUA_IDENTIFY_BASE_URL
+        # — those are this workflow's actual concern. FIKUA_AUTH_SERVER_URL
         # isn't sensitive (a public URL, not a credential), so it comes from
         # the "prd" environment's Variables, not its Secrets.
         #
@@ -99,7 +99,7 @@ jobs:
         env:
           FIKUA_DSS_CLIENT_SECRET: ${{ secrets.FIKUA_DSS_CLIENT_SECRET }}
           FIKUA_DSS_CREDENTIAL_PASSWORD: ${{ secrets.FIKUA_DSS_CREDENTIAL_PASSWORD }}
-          FIKUA_IDENTIFY_BASE_URL: ${{ vars.FIKUA_IDENTIFY_BASE_URL }}
+          FIKUA_AUTH_SERVER_URL: ${{ vars.FIKUA_AUTH_SERVER_URL }}
         run: |
           set -e
           ssh vps.fikua.com 'sudo mkdir -p /opt/vps/projects/fikua-lab-issuer'
@@ -107,7 +107,7 @@ jobs:
           set -e
           ENV_FILE=/opt/vps/projects/fikua-lab-issuer/.env
           touch "\$ENV_FILE"
-          grep -v -E '^(FIKUA_DSS_|FIKUA_IDENTIFY_BASE_URL=)' "\$ENV_FILE" > "\$ENV_FILE.tmp" || true
+          grep -v -E '^(FIKUA_DSS_|FIKUA_AUTH_SERVER_URL=)' "\$ENV_FILE" > "\$ENV_FILE.tmp" || true
           {
             cat "\$ENV_FILE.tmp"
             echo "FIKUA_DSS_URL=https://dss.fikua.com"
@@ -115,7 +115,7 @@ jobs:
             echo "FIKUA_DSS_CLIENT_SECRET=$FIKUA_DSS_CLIENT_SECRET"
             echo "FIKUA_DSS_CREDENTIAL_ID=fikua-credential-001"
             echo "FIKUA_DSS_CREDENTIAL_PASSWORD=$FIKUA_DSS_CREDENTIAL_PASSWORD"
-            echo "FIKUA_IDENTIFY_BASE_URL=$FIKUA_IDENTIFY_BASE_URL"
+            echo "FIKUA_AUTH_SERVER_URL=$FIKUA_AUTH_SERVER_URL"
           } > "\$ENV_FILE"
           rm -f "\$ENV_FILE.tmp"
           chmod 600 "\$ENV_FILE"

@@ -1,3 +1,12 @@
+// DUPLICATED FILE: fikua-lab-idp/internal/oauth2/dpop.go is a near-copy
+// of this one. RFC 9449 proofs are presented directly to whichever service
+// handles the request and validated locally — this issuer needs it at
+// /credential and /nonce, the authorization server needs it at /par and
+// /token, and neither consults the other at request time. A shared Go
+// module was weighed and rejected for the initial split: cross-repo
+// version pinning costs more than ~200 duplicated lines that track a
+// frozen RFC. Fix bugs in both copies; extract a module only if a third
+// consumer appears.
 package oauth2
 
 import (

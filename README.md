@@ -18,6 +18,13 @@ sender-constraining (RFC 9449), ATCA draft-07 client attestation, and
 PKCE S256 are all mandatory on every request. There is no profile
 selection and no pre-authorized_code/plain flow.
 
+**The authorization server is a separate service.** PAR, `/authorize` and
+`/token` live in
+[`fikua-lab-idp`](https://github.com/fikua/fikua-lab-idp), advertised via
+this issuer's `authorization_servers` metadata. This service verifies the
+RFC 9068 JWT access tokens that AS mints, against its published JWK Set —
+set `FIKUA_AUTH_SERVER_URL` to point at it.
+
 ## Run
 
 ```sh
@@ -26,15 +33,13 @@ make run          # http://localhost:8080
 
 ## API
 
-- `GET /.well-known/openid-credential-issuer` / `GET /.well-known/oauth-authorization-server` — OID4VCI / RFC 8414 metadata.
+- `GET /.well-known/openid-credential-issuer` — OID4VCI metadata (its `authorization_servers` points at `fikua-lab-idp`).
 - `GET /oid4vci/v1/jwks` — issuer's public JWK Set.
 - `POST /oid4vci/v1/issuance` — trigger an issuance, returns a `credential_offer_uri` (by-reference authorization_code credential offer).
 - `GET /oid4vci/v1/credential-offer/{id}` — resolves a `credential_offer_uri` to its Credential Offer JSON.
 - `GET /oid4vci/v1/issuance` — paginated, sortable issuance record listing.
-- `POST /oid4vci/v1/par` — Pushed Authorization Request.
-- `GET /oid4vci/v1/authorize` — resolves a PAR request_uri into an authorization code (redirect).
-- `POST /oid4vci/v1/token` — authorization_code grant, DPoP-bound.
-- `POST /oid4vci/v1/nonce` — c_nonce issuance, DPoP-validated once a session exists.
+- `GET /oid4vci/v1/issuance/by-issuer-state/{issuerState}` — resolves an offer's `issuer_state` to its record; called by `fikua-lab-idp` during `/authorize`.
+- `POST /oid4vci/v1/nonce` — c_nonce issuance (OID4VCI §7), DPoP-validated when an access token is presented.
 - `POST /oid4vci/v1/credential` — credential issuance (SD-JWT VC or mdoc).
 - `POST /oid4vci/v1/notification` — no-op per OID4VCI §10.1 (this issuer doesn't yet track notification_id).
 - `GET /health` — health check (reports `degraded` if the attestation-registry catalogue refresh is stale).

@@ -42,15 +42,13 @@ services:
       FIKUA_DSS_CLIENT_SECRET: ${FIKUA_DSS_CLIENT_SECRET:?FIKUA_DSS_CLIENT_SECRET must be set in .env}
       FIKUA_DSS_CREDENTIAL_ID: ${FIKUA_DSS_CREDENTIAL_ID:-fikua-credential-001}
       FIKUA_DSS_CREDENTIAL_PASSWORD: ${FIKUA_DSS_CREDENTIAL_PASSWORD:?FIKUA_DSS_CREDENTIAL_PASSWORD must be set in .env}
-      # End-user identification frontend /authorize redirects to when no
-      # issuer_state resolves an existing issuance record. Empty (the
-      # container-side default when unset) keeps the synthetic-PID
-      # fallback active — see internal/config.IdentifyBaseURL's doc
-      # comment. deploy.yml's .env-merge step writes this from the "prd"
-      # environment's Variables (not Secrets — it's a public URL); this
-      # line is what actually gets it from .env into the container, which
-      # was missing here even after that step existed.
-      FIKUA_IDENTIFY_BASE_URL: ${FIKUA_IDENTIFY_BASE_URL:-}
+      # The authorization server (fikua-lab-idp) that runs the OAuth2
+      # flow for this issuer: advertised as authorization_servers in the
+      # Credential Issuer Metadata, and the source of the JWK Set and
+      # revoked-token list that access tokens are verified against.
+      # Replaces FIKUA_IDENTIFY_BASE_URL, which pointed at the
+      # identification frontend back when the AS lived in this process.
+      FIKUA_AUTH_SERVER_URL: ${FIKUA_AUTH_SERVER_URL:-https://idp.fikua.com}
     depends_on:
       fikua-lab-issuer-db:
         condition: service_healthy

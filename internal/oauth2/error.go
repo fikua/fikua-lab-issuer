@@ -1,5 +1,10 @@
-// Package oauth2 holds the OAuth2/OID4VCI error model shared by every
-// endpoint.
+// Package oauth2 holds the OID4VCI error model and the DPoP proof
+// validation this issuer's protected endpoints rely on.
+//
+// The OAuth2 authorization server that used to live here — PAR,
+// /authorize, /token, PKCE, ATCA client attestation — moved to
+// fikua-lab-idp. What remains is what a resource server needs on its own:
+// error responses, and DPoP proofs presented directly to it.
 package oauth2
 
 // Error codes, per OID4VCI 1.0 Final §8.3.1 and OAuth2 core.
@@ -7,20 +12,11 @@ const (
 	InvalidRequest = "invalid_request"
 	InvalidGrant   = "invalid_grant"
 	InvalidClient  = "invalid_client"
-	// InvalidClientAttestation, per ATCA draft-07 §6.2, MAY be used
-	// alongside the more general invalid_client when a client
-	// attestation or its proof-of-possession fails verification.
-	InvalidClientAttestation = "invalid_client_attestation"
-	// UnsupportedResponseType, per RFC 6749 §4.1.2.1, is returned when
-	// response_type isn't one this authorization server supports — this
-	// issuer only ever supports "code" (FAPI 2.0 Security Profile
-	// §5.3.2.2-1 forbids hybrid/implicit response types like
-	// "code id_token").
-	UnsupportedResponseType        = "unsupported_response_type"
-	UnsupportedGrantType           = "unsupported_grant_type"
+	// InvalidToken, per RFC 6750 §3.1, covers every way an access token
+	// presented at /credential can fail: malformed, badly signed, expired,
+	// revoked, minted for another audience, or not matching the DPoP key
+	// it was bound to.
 	InvalidToken                   = "invalid_token"
-	UnsupportedCredentialType      = "unsupported_credential_type"
-	UnsupportedCredentialFormat    = "unsupported_credential_format"
 	InvalidProof                   = "invalid_proof"
 	InvalidNonce                   = "invalid_nonce"
 	UnknownCredentialConfiguration = "unknown_credential_configuration"
