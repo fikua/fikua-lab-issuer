@@ -170,10 +170,10 @@ func (c *Client) SignHash(ctx context.Context, hash []byte, hashAlgorithmOID str
 	}
 
 	reqBody, err := json.Marshal(map[string]any{
-		"credentialID": c.cfg.CredentialID,
-		"SAD":          sad,
-		"hash":         []string{base64.RawURLEncoding.EncodeToString(hash)},
-		"hashAlgo":     hashAlgorithmOID,
+		"credentialID":     c.cfg.CredentialID,
+		"SAD":              sad,
+		"hashes":           []string{base64.RawURLEncoding.EncodeToString(hash)},
+		"hashAlgorithmOID": hashAlgorithmOID,
 	})
 	if err != nil {
 		return nil, err
