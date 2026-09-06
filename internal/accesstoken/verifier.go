@@ -67,12 +67,22 @@ type Verifier struct {
 	revokedExp time.Time
 }
 
-// cacheTTL bounds how stale the cached JWK Set and revocation denylist
-// may get. Short enough that a revoked token stops working promptly (the
-// AS keeps a jti published well past this, so no revocation is missed),
-// long enough that /credential doesn't turn into a proxy for two extra
-// HTTP calls per request.
-const cacheTTL = 60 * time.Second
+// jwksCacheTTL bounds how stale the cached JWK Set may get. Signing keys
+// rotate rarely, so a full minute of staleness costs nothing in practice
+// while still keeping /credential's common path free of a JWKS fetch on
+// every request.
+const jwksCacheTTL = 60 * time.Second
+
+// revokedCacheTTL bounds how stale the cached revocation denylist may
+// get. Unlike the JWKS this must be short: FAPI 2.0's
+// attempt-reuse-authorization-code-after-one-second conformance test
+// reuses a code (and so expects its access token revoked) within a
+// second of first use — a 60s-stale denylist let that reused token still
+// succeed at /credential, since fetchRevoked() only reruns once
+// revokedExp has passed. The AS keeps a jti published for
+// 2*revokedJTIRetention specifically so a poll interval this short still
+// can't miss one.
+const revokedCacheTTL = 2 * time.Second
 
 // New builds a Verifier. issuer is the authorization server's identifier
 // (the expected `iss`), audience is this credential issuer's own base URL
@@ -189,7 +199,7 @@ func (v *Verifier) keySet(ctx context.Context) (jwk.Set, error) {
 		}
 		return nil, err
 	}
-	v.keys, v.keysExp = keys, time.Now().Add(cacheTTL)
+	v.keys, v.keysExp = keys, time.Now().Add(jwksCacheTTL)
 	return keys, nil
 }
 
@@ -229,7 +239,7 @@ func (v *Verifier) isRevoked(ctx context.Context, jti string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		v.revoked, v.revokedExp = revoked, time.Now().Add(cacheTTL)
+		v.revoked, v.revokedExp = revoked, time.Now().Add(revokedCacheTTL)
 	}
 	_, found := v.revoked[jti]
 	return found, nil
