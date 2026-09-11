@@ -22,6 +22,12 @@
 # fikua-lab-attestation-registry otherwise: direct Cloudflare-proxied
 # hostname -> Traefik -> container, no Tunnel, no Cloudflare Access, no
 # Worker in front.
+#
+# name: groups this service under "fikua-digital-identity-lab" in
+# Docker/Dozzle, alongside every other Fikua Lab service (see
+# fikua-lab-idp/compose.yaml's identical comment).
+
+name: fikua-digital-identity-lab
 
 services:
   fikua-lab-issuer:
