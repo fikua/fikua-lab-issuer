@@ -19,3 +19,21 @@ func isScalarType(dataType string) bool {
 	}
 	return true
 }
+
+// isDateType reports whether a registry ClaimDefinition.DataType
+// describes a calendar date (e.g. "full-date", "tdate or full-date",
+// "string (ISO 8601-1 YYYY-MM-DD)") — same free-form-prose substring
+// matching as isScalarType, since DataType is not an enum here either.
+// Lets the identification form (fikua-lab-idp's web/static/app.js)
+// render the right input type for whatever credential is actually being
+// issued, instead of a fixed list of PID field names.
+func isDateType(dataType string) bool {
+	lower := strings.ToLower(dataType)
+	markers := []string{"full-date", "tdate", "yyyy-mm-dd"}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
