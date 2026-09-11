@@ -73,7 +73,7 @@ func main() {
 	webui.NewHandler(staticFS, cfg.BasePath).Routes(mux)
 
 	log.Printf("fikua-lab-issuer listening on %s (issuing %d/%d configured schemes; %d total in catalogue from %s)", cfg.Addr, foundSchemes, len(cfg.IssuableSchemes), len(cache.All()), cfg.AttestationRegistryURL)
-	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
+	if err := http.ListenAndServe(cfg.Addr, httpapi.WithCORS(mux)); err != nil {
 		log.Fatal(err)
 	}
 }
