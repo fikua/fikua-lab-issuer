@@ -11,11 +11,11 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	cscclient "github.com/fikua/fikua-dss-csc-client-go"
 	"github.com/fikua/fikua-lab-issuer/db"
 	"github.com/fikua/fikua-lab-issuer/internal/accesstoken"
 	"github.com/fikua/fikua-lab-issuer/internal/config"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
-	"github.com/fikua/fikua-lab-issuer/internal/cscclient"
 	"github.com/fikua/fikua-lab-issuer/internal/httpapi"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
