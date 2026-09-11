@@ -46,6 +46,11 @@ type Display struct {
 type Claim struct {
 	Path    []string       `json:"path"`
 	Display []ClaimDisplay `json:"display,omitempty"`
+	// Mandatory mirrors the attestation-registry scheme's own presence
+	// declaration (registryclient.PresenceMandatory) — the identification
+	// UI (web/static/app.js) uses this to decide which fields to require,
+	// instead of a hardcoded field list only valid for one scheme.
+	Mandatory bool `json:"mandatory"`
 }
 
 type ClaimDisplay struct {
@@ -124,8 +129,9 @@ func buildClaims(claims []registryclient.ClaimDefinition) []Claim {
 			continue
 		}
 		out = append(out, Claim{
-			Path:    c.Path,
-			Display: []ClaimDisplay{{Name: claimLabel(c.DataIdentifier), Locale: "en"}},
+			Path:      c.Path,
+			Display:   []ClaimDisplay{{Name: claimLabel(c.DataIdentifier), Locale: "en"}},
+			Mandatory: c.Presence == registryclient.PresenceMandatory,
 		})
 	}
 	return out
