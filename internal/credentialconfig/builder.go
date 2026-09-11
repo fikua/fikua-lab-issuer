@@ -51,6 +51,11 @@ type Claim struct {
 	// UI (web/static/app.js) uses this to decide which fields to require,
 	// instead of a hardcoded field list only valid for one scheme.
 	Mandatory bool `json:"mandatory"`
+	// IsDate mirrors whether the scheme's own DataType describes a
+	// calendar date (see isDateType) — the identification UI uses this
+	// to render a date input, instead of a hardcoded field-name list
+	// only valid for one scheme.
+	IsDate bool `json:"is_date,omitempty"`
 }
 
 type ClaimDisplay struct {
@@ -132,6 +137,7 @@ func buildClaims(claims []registryclient.ClaimDefinition) []Claim {
 			Path:      c.Path,
 			Display:   []ClaimDisplay{{Name: claimLabel(c.DataIdentifier), Locale: "en"}},
 			Mandatory: c.Presence == registryclient.PresenceMandatory,
+			IsDate:    isDateType(c.DataType),
 		})
 	}
 	return out
