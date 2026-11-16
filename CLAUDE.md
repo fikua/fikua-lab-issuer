@@ -98,17 +98,18 @@ db/                        embedded Postgres schema (schema.sql), applied idempo
 
 ## Deployment
 
-CI/CD (`.github/workflows/`) mirrors `fikua-lab-attestation-registry`'s
-pipeline exactly: `build.yml` (vet/test) → `release.yml` (multi-arch
-Docker Hub push) → `deploy.yml` (SSH via Cloudflare Access tunnel *for
-VPS access only*, `docker compose pull && up -d`, health poll, Traefik
-smoke test).
+CI (`.github/workflows/ci.yml`, shared workflows from `fikua/fikua-ci-workflows`):
+vet/build/test on every push and PR; on every push to `main` the image
+`ghcr.io/fikua/fikua-lab-issuer` is published as `latest` and `sha-<short>`, and
+`gh release create vX.Y.Z` publishes it as `X.Y.Z`.
+
+This repository does not deploy. Production is
+`fikua-platform-iac/projects/fikua-lab-issuer/compose.yaml`, which pins a release
+(`X.Y.Z`); Dependabot there opens a pull request for each new release and
+merging it deploys (fikua-docs ADR 0019). No VPS or Cloudflare Access secret
+is needed here.
 
 Public at `issuer.fikua.com` — a plain Cloudflare-proxied A record
 straight to Traefik, same pattern as `fikua-lab-attestation-registry`.
 No Tunnel, no Cloudflare Access, no Worker in front.
 
-The deployment definition (`compose.yaml`) should be sourced from
-`fikua-platform-iac/projects/fikua-lab-issuer/` once that exists, synced
-into this repo's own `compose.yaml` so `deploy.yml` can `scp` it — same
-convention as `fikua-lab-attestation-registry` and `niu`.
