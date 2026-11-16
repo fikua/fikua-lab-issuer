@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/fikua/fikua-lab-issuer/internal/audit"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
 )
@@ -58,6 +59,11 @@ func (h *Handler) triggerIssuance(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, err)
 		return
 	}
+	scheme := req.CredentialType
+	if scheme == "" {
+		scheme = issuance.PIDConfigID
+	}
+	audit.IssuanceCreated(r.Context(), result.IssuanceID, scheme)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -82,6 +88,7 @@ func (h *Handler) revokeIssuance(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, err)
 		return
 	}
+	audit.CredentialRevoked(r.Context(), r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -103,33 +110,37 @@ func (h *Handler) nonce(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) credential(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	reject := func(err error) {
+		audit.CredentialRejected(r.Context(), oauthErrorCode(err))
+		writeOAuthError(w, err)
+	}
 	authHeader := r.Header.Get("Authorization")
 	accessToken := extractAccessToken(authHeader)
 	if accessToken == "" {
-		writeOAuthError(w, oauth2.Unauthorized(oauth2.InvalidToken, "Missing access token"))
+		reject(oauth2.Unauthorized(oauth2.InvalidToken, "Missing access token"))
 		return
 	}
 	// This issuer is HAIP-only: every access token is DPoP-bound, so
 	// presenting it with the Bearer scheme is rejected outright, before
 	// any DPoP proof validation — matching the Java issuer's ordering.
 	if hasCaseInsensitivePrefix(authHeader, "bearer ") {
-		writeOAuthError(w, oauth2.Unauthorized(oauth2.InvalidToken, "DPoP-bound tokens must use DPoP authorization scheme, not Bearer"))
+		reject(oauth2.Unauthorized(oauth2.InvalidToken, "DPoP-bound tokens must use DPoP authorization scheme, not Bearer"))
 		return
 	}
 	dpopHeader, err := oauth2.SingleDPoPHeader(r.Header.Values("DPoP"))
 	if err != nil {
-		writeOAuthError(w, err)
+		reject(err)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeOAuthError(w, oauth2.BadRequest(oauth2.InvalidCredentialRequest, "Failed to read request body: "+err.Error()))
+		reject(oauth2.BadRequest(oauth2.InvalidCredentialRequest, "Failed to read request body: "+err.Error()))
 		return
 	}
 	resp, issueErr := h.issuance.IssueCredential(r.Context(), accessToken, dpopHeader, body)
 	if issueErr != nil {
-		writeOAuthError(w, issueErr)
+		reject(issueErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -164,6 +175,15 @@ func hasCaseInsensitivePrefix(s, prefix string) bool {
 		}
 	}
 	return true
+}
+
+// oauthErrorCode is the stable OAuth2 error code of err, for the audit event
+// and the business counter; never its description.
+func oauthErrorCode(err error) string {
+	if exc, ok := err.(*oauth2.Exception); ok {
+		return string(exc.Err.Code)
+	}
+	return "server_error"
 }
 
 func writeOAuthError(w http.ResponseWriter, err error) {

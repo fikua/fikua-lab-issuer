@@ -10,6 +10,7 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
 	"github.com/fikua/fikua-lab-issuer/internal/accesstoken"
+	"github.com/fikua/fikua-lab-issuer/internal/audit"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
 	"github.com/fikua/fikua-lab-issuer/internal/mdoc"
 	"github.com/fikua/fikua-lab-issuer/internal/oauth2"
@@ -265,6 +266,11 @@ func (s *Service) IssueCredential(ctx context.Context, accessToken, dpopHeader s
 	s.issuances.UpdateStatus(issuanceRecordID, "credential_issued")
 	s.sessions.InvalidateNonce(claims.CNonce)
 
+	format := "dc+sd-jwt"
+	if req.CredentialConfigurationID == PIDMdocConfigID {
+		format = "mso_mdoc"
+	}
+	audit.CredentialIssued(ctx, issuanceRecordID, req.CredentialConfigurationID, format)
 	return oid4vci.SuccessResponse(credential), nil
 }
 
