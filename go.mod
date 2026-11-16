@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/fikua/fikua-dss-csc-client-go v0.1.0
-	github.com/fxamacker/cbor/v2 v2.9.3
+	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/lestrrat-go/jwx/v3 v3.2.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.21.0
