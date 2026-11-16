@@ -75,25 +75,20 @@ static binary.
 
 ## Deployment
 
-CI/CD mirrors `fikua-lab-attestation-registry`'s pipeline:
+CI (`.github/workflows/ci.yml`, shared workflows from `fikua/fikua-ci-workflows`):
+vet/build/test on every push and PR; on every push to `main` the image
+`ghcr.io/fikua/fikua-lab-issuer` is published as `latest` and `sha-<short>`, and
+`gh release create vX.Y.Z` publishes it as `X.Y.Z`.
 
-1. `build.yml` — vet/build/test on every push and PR.
-2. `release.yml` — on push to `main` or a published release, builds a
-   multi-arch image and pushes `docker.io/fikua/fikua-lab-issuer` to
-   Docker Hub.
-3. `deploy.yml` — manually dispatched, or auto-triggered by a published
-   release (gated behind the `prd` GitHub Environment's required
-   reviewers). SSHes into the VPS through a Cloudflare Access tunnel,
-   syncs `compose.yaml` to `/opt/vps/projects/fikua-lab-issuer/`, runs
-   `docker compose pull && up -d`, then polls `/health`.
+This repository does not deploy. Production is
+`fikua-platform-iac/projects/fikua-lab-issuer/compose.yaml`, which pins a release
+(`X.Y.Z`); Dependabot there opens a pull request for each new release and
+merging it deploys (fikua-docs ADR 0019). No VPS or Cloudflare Access secret
+is needed here.
 
 Public at `https://issuer.fikua.com` — a plain Cloudflare-proxied A
 record straight to Traefik, same pattern as `fikua-lab-attestation-registry`.
 No Cloudflare Access, no Tunnel, no Worker in front.
-
-Required repo secrets (same as `fikua-lab-attestation-registry`):
-`DOCKER_USERNAME`, `DOCKER_TOKEN`, `VPS_SSH_PRIVATE_KEY`,
-`CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`.
 
 ## License
 
