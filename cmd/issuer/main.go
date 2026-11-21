@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/fikua/fikua-lab-issuer/internal/accesstoken"
 	"github.com/fikua/fikua-lab-issuer/internal/config"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
+	"github.com/fikua/fikua-lab-issuer/internal/health"
 	"github.com/fikua/fikua-lab-issuer/internal/httpapi"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
@@ -26,6 +28,9 @@ import (
 )
 
 func main() {
+	if health.IsHealthcheck() {
+		os.Exit(health.Probe(config.ListenAddr()))
+	}
 	shutdownTelemetry, telErr := telemetry.Setup(context.Background(), "fikua-lab-issuer")
 	if telErr != nil {
 		log.Fatalf("telemetry: %v", telErr)
