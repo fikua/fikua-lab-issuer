@@ -59,7 +59,7 @@ type Config struct {
 // where unset.
 func Load() Config {
 	return Config{
-		Addr:                    getenv("ADDR", ":8080"),
+		Addr:                    ListenAddr(),
 		BasePath:                getenv("BASE_PATH", ""),
 		BaseURL:                 getenv("FIKUA_BASE_URL", "https://issuer.fikua.com"),
 		AttestationRegistryURL:  getenv("FIKUA_ATTESTATION_REGISTRY_URL", "https://attestation-registry.fikua.com"),
@@ -85,6 +85,9 @@ func splitCSV(v string) []string {
 	}
 	return out
 }
+
+// ListenAddr is the address the server listens on (ADDR, default :8080).
+func ListenAddr() string { return getenv("ADDR", ":8080") }
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

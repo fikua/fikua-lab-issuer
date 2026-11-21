@@ -9,11 +9,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/fikua/fikua-lab-issuer/internal/credentialconfig"
 	fikuacrypto "github.com/fikua/fikua-lab-issuer/internal/crypto"
+	"github.com/fikua/fikua-lab-issuer/internal/health"
 	"github.com/fikua/fikua-lab-issuer/internal/issuance"
 	"github.com/fikua/fikua-lab-issuer/internal/oid4vci"
 	"github.com/fikua/fikua-lab-issuer/internal/registryclient"
@@ -68,11 +70,12 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
-	status := "ok"
-	if h.cache.Stale() {
-		status = "degraded"
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+	health.Handler("", map[string]health.Check{"cache:fresh": func(context.Context) error {
+		if h.cache.Stale() {
+			return health.ErrWarn
+		}
+		return nil
+	}})(w, r)
 }
 
 func (h *Handler) credentialIssuerMetadata(w http.ResponseWriter, r *http.Request) {
